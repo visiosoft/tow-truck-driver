@@ -2,9 +2,12 @@ package com.mpo.towtruckdriver
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -31,16 +34,31 @@ import kotlinx.coroutines.delay
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.*
-import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.*
+import com.google.android.gms.maps.CameraUpdateFactory
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.launch
 import android.location.Location
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import androidx.compose.runtime.collectAsState
+
+// Location manager to handle location state
+object AppLocationManager {
+    private val _location = MutableStateFlow<LatLng?>(null)
+    val location = _location.asStateFlow()
+
+    fun updateLocation(newLocation: LatLng) {
+        _location.value = newLocation
+    }
+}
 
 class MainActivity : ComponentActivity() {
     private lateinit var sharedPreferences: SharedPreferences
+    private lateinit var fusedLocationClient: FusedLocationProviderClient
 
     private val locationPermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -48,9 +66,11 @@ class MainActivity : ComponentActivity() {
         when {
             permissions.getOrDefault(Manifest.permission.ACCESS_FINE_LOCATION, false) -> {
                 // Precise location access granted
+                startLocationUpdates()
             }
             permissions.getOrDefault(Manifest.permission.ACCESS_COARSE_LOCATION, false) -> {
                 // Only approximate location access granted
+                startLocationUpdates()
             }
             else -> {
                 // No location access granted
@@ -61,6 +81,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         sharedPreferences = getSharedPreferences("TowTruckDriverPrefs", Context.MODE_PRIVATE)
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         enableEdgeToEdge()
         setContent {
             TowTruckDriverTheme {
@@ -82,9 +103,18 @@ class MainActivity : ComponentActivity() {
                 Manifest.permission.ACCESS_FINE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED -> {
                 // Permission already granted
+                startLocationUpdates()
+                // Request background location if needed
+                requestBackgroundLocationPermission()
             }
             shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION) -> {
                 // Show permission rationale
+                locationPermissionRequest.launch(
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION
+                    )
+                )
             }
             else -> {
                 locationPermissionRequest.launch(
@@ -95,6 +125,58 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private fun requestBackgroundLocationPermission() {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED) {
+            // Request background location permission
+            locationPermissionRequest.launch(
+                arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            )
+        }
+    }
+
+    private fun startLocationUpdates() {
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED) {
+            
+            val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10000)
+                .setWaitForAccurateLocation(false)
+                .setMinUpdateIntervalMillis(5000)
+                .build()
+
+            fusedLocationClient.requestLocationUpdates(
+                locationRequest,
+                locationCallback,
+                mainLooper
+            )
+        }
+    }
+
+    private val locationCallback = object : LocationCallback() {
+        override fun onLocationResult(locationResult: LocationResult) {
+            locationResult.lastLocation?.let { location ->
+                // Update the location state
+                AppLocationManager.updateLocation(LatLng(location.latitude, location.longitude))
+                println("Location updated: ${location.latitude}, ${location.longitude}")
+            }
+        }
+
+        override fun onLocationAvailability(locationAvailability: LocationAvailability) {
+            if (!locationAvailability.isLocationAvailable) {
+                println("Location is not available")
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        fusedLocationClient.removeLocationUpdates(locationCallback)
     }
 }
 
@@ -170,13 +252,21 @@ fun MapScreen(
 ) {
     val context = LocalContext.current
     val coroutineScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main) }
-    var userLocation by remember { mutableStateOf<LatLng?>(null) }
+    val userLocation by AppLocationManager.location.collectAsState(initial = null)
+    val rabbitMQService = remember { RabbitMQService() }
     var hasLocationPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.ACCESS_FINE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    
+    var isLocationEnabled by remember {
+        mutableStateOf(
+            (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager)
+                .isProviderEnabled(LocationManager.GPS_PROVIDER)
         )
     }
     
@@ -189,36 +279,123 @@ fun MapScreen(
         )
     }
 
-    LaunchedEffect(hasLocationPermission) {
-        if (hasLocationPermission) {
-            try {
-                val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
-                val location = fusedLocationClient.lastLocation.await()
-                location?.let {
-                    userLocation = LatLng(it.latitude, it.longitude)
+    var cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(
+            userLocation ?: LatLng(0.0, 0.0),
+            15f
+        )
+    }
+
+    // Update camera position when location changes
+    LaunchedEffect(userLocation) {
+        userLocation?.let { location ->
+            cameraPositionState.animate(
+                update = CameraUpdateFactory.newLatLng(location),
+                durationMs = 1000
+            )
+            
+            // Send location update to RabbitMQ
+            val locationMessage = """
+                {
+                    "latitude": ${location.latitude},
+                    "longitude": ${location.longitude},
+                    "timestamp": ${System.currentTimeMillis()}
                 }
-            } catch (e: Exception) {
-                // Handle location error
-            }
+            """.trimIndent()
+            rabbitMQService.sendMessage(locationMessage)
         }
+    }
+
+    // Update map properties when permission changes
+    LaunchedEffect(hasLocationPermission) {
+        mapProperties = mapProperties.copy(isMyLocationEnabled = hasLocationPermission)
     }
 
     Box(modifier = modifier.fillMaxSize()) {
         GoogleMap(
             modifier = Modifier.fillMaxSize(),
             properties = mapProperties,
-            cameraPositionState = rememberCameraPositionState {
-                position = CameraPosition.fromLatLngZoom(
-                    userLocation ?: LatLng(0.0, 0.0),
-                    15f
-                )
+            cameraPositionState = cameraPositionState,
+            onMapLoaded = {
+                // Map is ready
             }
         ) {
-            if (hasLocationPermission) {
-                userLocation?.let { location ->
-                    Marker(
-                        state = MarkerState(position = location),
-                        title = "Your Location"
+            if (hasLocationPermission && userLocation != null) {
+                Marker(
+                    state = MarkerState(position = userLocation!!),
+                    title = "Your Location",
+                    snippet = "Lat: ${userLocation!!.latitude}, Lng: ${userLocation!!.longitude}"
+                )
+            }
+        }
+
+        // Show location services disabled message
+        if (!isLocationEnabled) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Location Services Disabled",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Text(
+                        text = "Please enable location services to see your current position on the map.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Button(
+                        onClick = {
+                            context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                        }
+                    ) {
+                        Text("Enable Location Services")
+                    }
+                }
+            }
+        }
+
+        // Show permission denied message
+        if (!hasLocationPermission) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Location Permission Required",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Text(
+                        text = "Please grant location permission to see your current position on the map.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -241,6 +418,13 @@ fun WelcomeScreen(
                 context,
                 Manifest.permission.ACCESS_FINE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    var isLocationEnabled by remember {
+        mutableStateOf(
+            (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager)
+                .isProviderEnabled(LocationManager.GPS_PROVIDER)
         )
     }
 
@@ -269,6 +453,7 @@ fun WelcomeScreen(
 
         Spacer(modifier = Modifier.height(32.dp))
 
+        // Show location request card if permission not granted
         if (showLocationRequest && !hasLocationPermission) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -323,12 +508,99 @@ fun WelcomeScreen(
             }
         }
 
-        if (showMap && hasLocationPermission) {
-            MapScreen(
+        // Show map if permission granted
+        if (showMap || hasLocationPermission) {
+            // Location status indicator
+            LocationStatusIndicator(
+                hasLocationPermission = hasLocationPermission,
+                isLocationEnabled = isLocationEnabled,
+                userLocation = AppLocationManager.location.collectAsState(initial = null).value,
+                modifier = Modifier.fillMaxWidth()
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(300.dp)
-            )
+                    .height(400.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = "Live Location Map",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Text(
+                        text = "Your current location is being tracked and displayed on the map below.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    MapScreen(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    )
+                }
+            }
+        }
+
+        // Show location services disabled message
+        if (!isLocationEnabled && (showMap || hasLocationPermission)) {
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "⚠️ Location Services Disabled",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Text(
+                        text = "Please enable location services in your device settings to see your current position on the map.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Button(
+                        onClick = {
+                            context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("Enable Location Services")
+                    }
+                }
+            }
         }
     }
 }
@@ -737,5 +1009,65 @@ fun MainScreenPreview() {
             requestLocationPermission = {},
             sharedPreferences = mockSharedPreferences
         )
+    }
+}
+
+@Composable
+fun LocationStatusIndicator(
+    hasLocationPermission: Boolean,
+    isLocationEnabled: Boolean,
+    userLocation: LatLng?,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = when {
+                !hasLocationPermission -> MaterialTheme.colorScheme.errorContainer
+                !isLocationEnabled -> MaterialTheme.colorScheme.errorContainer
+                userLocation == null -> MaterialTheme.colorScheme.surfaceVariant
+                else -> MaterialTheme.colorScheme.primaryContainer
+            }
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Status indicator dot
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .background(
+                        color = when {
+                            !hasLocationPermission -> MaterialTheme.colorScheme.error
+                            !isLocationEnabled -> MaterialTheme.colorScheme.error
+                            userLocation == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                            else -> MaterialTheme.colorScheme.primary
+                        },
+                        shape = androidx.compose.foundation.shape.CircleShape
+                    )
+            )
+
+            Text(
+                text = when {
+                    !hasLocationPermission -> "Location Permission Required"
+                    !isLocationEnabled -> "Location Services Disabled"
+                    userLocation == null -> "Getting Location..."
+                    else -> "Location Active"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = when {
+                    !hasLocationPermission -> MaterialTheme.colorScheme.onErrorContainer
+                    !isLocationEnabled -> MaterialTheme.colorScheme.onErrorContainer
+                    userLocation == null -> MaterialTheme.colorScheme.onSurfaceVariant
+                    else -> MaterialTheme.colorScheme.onPrimaryContainer
+                }
+            )
+        }
     }
 }
