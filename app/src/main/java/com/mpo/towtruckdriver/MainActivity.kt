@@ -45,6 +45,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import androidx.compose.runtime.collectAsState
+import android.os.Looper
 
 // Location manager to handle location state
 object AppLocationManager {
@@ -246,28 +247,35 @@ fun PasswordStrengthMeter(
     }
 }
 
+// Utility functions for location checking
+fun hasLocationPermission(context: Context): Boolean {
+    return ContextCompat.checkSelfPermission(
+        context, Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED ||
+           ContextCompat.checkSelfPermission(
+        context, Manifest.permission.ACCESS_COARSE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+}
+
+fun isLocationEnabled(context: Context): Boolean {
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+    return locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+           locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+}
+
 @Composable
 fun MapScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val coroutineScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main) }
     val userLocation by AppLocationManager.location.collectAsState(initial = null)
     val rabbitMQService = remember { RabbitMQService() }
     var hasLocationPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-        )
+        mutableStateOf(hasLocationPermission(context))
     }
     
     var isLocationEnabled by remember {
-        mutableStateOf(
-            (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager)
-                .isProviderEnabled(LocationManager.GPS_PROVIDER)
-        )
+        mutableStateOf(isLocationEnabled(context))
     }
     
     var mapProperties by remember {
@@ -284,6 +292,40 @@ fun MapScreen(
             userLocation ?: LatLng(0.0, 0.0),
             15f
         )
+    }
+
+    // Request location updates if permission and services are enabled
+    LaunchedEffect(hasLocationPermission, isLocationEnabled) {
+        if (hasLocationPermission && isLocationEnabled) {
+            try {
+                val fusedLocationClient = LocationServices.getFusedLocationProviderClient(context)
+                val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000)
+                    .setMinUpdateIntervalMillis(2000)
+                    .build()
+                
+                fusedLocationClient.requestLocationUpdates(
+                    locationRequest,
+                    object : LocationCallback() {
+                        override fun onLocationResult(result: LocationResult) {
+                            result.lastLocation?.let { location ->
+                                AppLocationManager.updateLocation(LatLng(location.latitude, location.longitude))
+                                println("Location updated: ${location.latitude}, ${location.longitude}")
+                            }
+                        }
+                        override fun onLocationAvailability(availability: LocationAvailability) {
+                            if (!availability.isLocationAvailable) {
+                                println("Location is not available")
+                            }
+                        }
+                    },
+                    Looper.getMainLooper()
+                )
+            } catch (e: SecurityException) {
+                println("Location permission error: ${e.message}")
+            } catch (e: Exception) {
+                println("Location update error: ${e.message}")
+            }
+        }
     }
 
     // Update camera position when location changes
@@ -318,8 +360,17 @@ fun MapScreen(
             cameraPositionState = cameraPositionState,
             onMapLoaded = {
                 // Map is ready
+                println("✅ Google Maps loaded successfully!")
+                println("🗺️ Map API Key Status: Working")
             }
         ) {
+            // Test marker to verify map is working
+            Marker(
+                state = MarkerState(position = LatLng(0.0, 0.0)),
+                title = "Test Marker",
+                snippet = "If you see this, Maps API is working!"
+            )
+            
             if (hasLocationPermission && userLocation != null) {
                 Marker(
                     state = MarkerState(position = userLocation!!),
@@ -411,6 +462,7 @@ fun WelcomeScreen(
 ) {
     var showLocationRequest by remember { mutableStateOf(true) }
     var showMap by remember { mutableStateOf(false) }
+    var showWelcomeNote by remember { mutableStateOf(true) }
     val context = LocalContext.current
     var hasLocationPermission by remember {
         mutableStateOf(
@@ -423,145 +475,137 @@ fun WelcomeScreen(
 
     var isLocationEnabled by remember {
         mutableStateOf(
-            (context.getSystemService(Context.LOCATION_SERVICE) as LocationManager)
-                .isProviderEnabled(LocationManager.GPS_PROVIDER)
+            (context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager)
+                .isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)
         )
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "Welcome, $userName!",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center
-        )
+    // Auto-hide welcome note after 3 seconds
+    LaunchedEffect(Unit) {
+        delay(3000)
+        showWelcomeNote = false
+    }
 
-        Spacer(modifier = Modifier.height(16.dp))
+    Box(modifier = modifier.fillMaxSize()) {
+        // Full screen map
+        if (showMap || hasLocationPermission) {
+            MapScreen(
+                modifier = Modifier.fillMaxSize()
+            )
+        }
 
-        Text(
-            text = "We're excited to have you on board!",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // Show location request card if permission not granted
-        if (showLocationRequest && !hasLocationPermission) {
+        // Welcome note overlay (shown for first 3 seconds)
+        if (showWelcomeNote) {
             Card(
-                modifier = Modifier.fillMaxWidth(),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(24.dp)
+                    .fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                )
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "Location Access Required",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = "To provide you with the best service, we need access to your location. This helps us find nearby towing jobs and provide accurate navigation.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = "Welcome, $userName!",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = { showLocationRequest = false },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Not Now")
-                        }
+                    Text(
+                        text = "We're excited to have you on board!",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
 
-                        Button(
-                            onClick = {
-                                onLocationPermissionGranted()
-                                showLocationRequest = false
-                                hasLocationPermission = true
-                                showMap = true
-                            },
-                            modifier = Modifier.weight(1f)
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Show location request if permission not granted
+                    if (!hasLocationPermission) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                         ) {
-                            Text("Allow Access")
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "Location Access Required",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "To provide you with the best service, we need access to your location. This helps us find nearby towing jobs and provide accurate navigation.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center
+                                )
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = { showLocationRequest = false },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Not Now")
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            onLocationPermissionGranted()
+                                            showLocationRequest = false
+                                            hasLocationPermission = true
+                                            showMap = true
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Allow Access")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Show map if permission granted
-        if (showMap || hasLocationPermission) {
-            // Location status indicator
-            LocationStatusIndicator(
-                hasLocationPermission = hasLocationPermission,
-                isLocationEnabled = isLocationEnabled,
-                userLocation = AppLocationManager.location.collectAsState(initial = null).value,
-                modifier = Modifier.fillMaxWidth()
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
+        // Location status indicator (always visible at top)
+        LocationStatusIndicator(
+            hasLocationPermission = hasLocationPermission,
+            isLocationEnabled = isLocationEnabled,
+            userLocation = AppLocationManager.location.collectAsState(initial = null).value,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(16.dp)
+                .fillMaxWidth()
+        )
+
+        // Show location services disabled message at bottom
+        if (!isLocationEnabled && (showMap || hasLocationPermission)) {
             Card(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(400.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        text = "Live Location Map",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    Text(
-                        text = "Your current location is being tracked and displayed on the map below.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    MapScreen(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                    )
-                }
-            }
-        }
-
-        // Show location services disabled message
-        if (!isLocationEnabled && (showMap || hasLocationPermission)) {
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Card(
-                modifier = Modifier.fillMaxWidth(),
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp)
+                    .fillMaxWidth(),
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
             ) {
