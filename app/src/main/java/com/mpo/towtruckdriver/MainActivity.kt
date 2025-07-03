@@ -46,6 +46,35 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import androidx.compose.runtime.collectAsState
 import android.os.Looper
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.window.Dialog
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 
 // Location manager to handle location state
 object AppLocationManager {
@@ -261,6 +290,76 @@ fun isLocationEnabled(context: Context): Boolean {
     val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
     return locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
            locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MapScreenWithMenu(
+    onLogout: () -> Unit,
+    onHome: () -> Unit,
+    onProfile: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var showMenu by remember { mutableStateOf(false) }
+    Box(modifier = modifier.fillMaxSize()) {
+        MapScreen(modifier = Modifier.fillMaxSize())
+        // Top app bar with menu icon
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp, start = 8.dp)
+                .align(Alignment.TopStart),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = { showMenu = true }) {
+                Icon(Icons.Filled.Menu, contentDescription = "Menu")
+            }
+        }
+        // Modal bottom sheet menu
+        if (showMenu) {
+            ModalBottomSheet(
+                onDismissRequest = { showMenu = false }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Button(
+                        onClick = {
+                            showMenu = false
+                            onHome()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Home")
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            showMenu = false
+                            onProfile()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Profile")
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            showMenu = false
+                            onLogout()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Logout")
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -939,6 +1038,7 @@ fun MainScreen(
 ) {
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Loading) }
     var userName by remember { mutableStateOf("") }
+    var userEmail by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         // Check if user is already logged in
@@ -949,6 +1049,7 @@ fun MainScreen(
         if (savedEmail != null && savedPassword != null && savedName != null) {
             // User is already logged in
             userName = savedName
+            userEmail = savedEmail
             currentScreen = Screen.Welcome
         } else {
             // Show sign in screen
@@ -968,15 +1069,14 @@ fun MainScreen(
         Screen.SignIn -> {
             SignInScreen(
                 onSignInClick = { email, password ->
-                    // In a real app, you would validate credentials against a backend
-                    // For demo, we'll just store the credentials
                     sharedPreferences.edit().apply {
                         putString("user_email", email)
                         putString("user_password", password)
-                        putString("user_name", "Driver") // You might want to get this from the backend
+                        putString("user_name", "Driver")
                         apply()
                     }
                     userName = "Driver"
+                    userEmail = email
                     currentScreen = Screen.Welcome
                 },
                 onSignUpClick = {
@@ -988,8 +1088,6 @@ fun MainScreen(
         Screen.SignUp -> {
             SignUpScreen(
                 onSignUpClick = { name, email, password ->
-                    // In a real app, you would create an account on the backend
-                    // For demo, we'll just store the credentials
                     sharedPreferences.edit().apply {
                         putString("user_email", email)
                         putString("user_password", password)
@@ -997,6 +1095,7 @@ fun MainScreen(
                         apply()
                     }
                     userName = name
+                    userEmail = email
                     currentScreen = Screen.Welcome
                 },
                 onBackToSignIn = {
@@ -1006,9 +1105,46 @@ fun MainScreen(
             )
         }
         Screen.Welcome -> {
-            WelcomeScreen(
+            HomeScreen(
                 userName = userName,
-                onLocationPermissionGranted = requestLocationPermission,
+                onNavigateToProfile = {
+                    currentScreen = Screen.Profile
+                },
+                onNavigateToMap = {
+                    currentScreen = Screen.Map
+                },
+                onLogout = {
+                    sharedPreferences.edit().clear().apply()
+                    currentScreen = Screen.SignIn
+                },
+                modifier = modifier
+            )
+        }
+        Screen.Map -> {
+            MapScreenWithMenu(
+                onLogout = {
+                    sharedPreferences.edit().clear().apply()
+                    currentScreen = Screen.SignIn
+                },
+                onHome = {
+                    currentScreen = Screen.Welcome
+                },
+                onProfile = {
+                    currentScreen = Screen.Profile
+                },
+                modifier = modifier
+            )
+        }
+        Screen.Profile -> {
+            ProfileScreen(
+                userName = userName,
+                userEmail = userEmail,
+                onBack = {
+                    currentScreen = Screen.Welcome
+                },
+                onEditProfile = {
+                    // TODO: Implement edit profile functionality
+                },
                 modifier = modifier
             )
         }
@@ -1016,7 +1152,7 @@ fun MainScreen(
 }
 
 enum class Screen {
-    Loading, SignIn, SignUp, Welcome
+    Loading, SignIn, SignUp, Welcome, Profile, Map
 }
 
 @Preview(showBackground = true)
@@ -1114,4 +1250,2025 @@ fun LocationStatusIndicator(
             )
         }
     }
+}
+
+@Composable
+fun ProfileScreen(
+    userName: String,
+    userEmail: String,
+    onBack: () -> Unit,
+    onEditProfile: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var showImagePicker by remember { mutableStateOf(false) }
+    var profileImage by remember { mutableStateOf<String?>(null) }
+    
+    // Mock data - in a real app, this would come from a database or API
+    val driverData = remember {
+        DriverProfileData(
+            name = userName,
+            email = userEmail,
+            phone = "+1 (555) 123-4567",
+            fleetName = "ABC Trucking Co.",
+            driverId = "DRV-2024-001",
+            licenseNumber = "CDL-123456789",
+            licenseType = "CDL Class A",
+            licenseExpiry = "2024-12-15",
+            licenseImage = null,
+            vehiclePlate = "ABC-1234",
+            vehicleMake = "Freightliner",
+            vehicleModel = "Cascadia 2022",
+            vehicleVin = "1FUJA6CV12L123456",
+            trailerPlate = "XYZ-5678",
+            trailerType = "Flatbed"
+        )
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+    ) {
+        // Header with back button and title
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back"
+                )
+            }
+            Text(
+                text = "Driver Profile",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onEditProfile) {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = "Edit Profile"
+                )
+            }
+        }
+
+        // Profile Header Section
+        ProfileHeaderSection(
+            driverData = driverData,
+            profileImage = profileImage,
+            onImageClick = { showImagePicker = true },
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Personal Information Card
+        PersonalInfoCard(
+            driverData = driverData,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // License Information Card
+        LicenseInfoCard(
+            driverData = driverData,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Vehicle Details Card
+        VehicleDetailsCard(
+            driverData = driverData,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+    }
+
+    // Image picker dialog (placeholder for future implementation)
+    if (showImagePicker) {
+        AlertDialog(
+            onDismissRequest = { showImagePicker = false },
+            title = { Text("Update Profile Photo") },
+            text = { Text("Choose how you want to update your profile photo") },
+            confirmButton = {
+                TextButton(onClick = { showImagePicker = false }) {
+                    Text("Camera")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImagePicker = false }) {
+                    Text("Gallery")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun ProfileHeaderSection(
+    driverData: DriverProfileData,
+    profileImage: String?,
+    onImageClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Profile Photo
+            Box(
+                modifier = Modifier
+                    .size(120.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = androidx.compose.foundation.shape.CircleShape
+                    )
+                    .clickable { onImageClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                if (profileImage != null) {
+                    // TODO: Load actual image
+                    Text(
+                        text = driverData.name.take(1).uppercase(),
+                        style = MaterialTheme.typography.headlineLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = "Profile Photo",
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = "Tap to add photo",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Driver Name
+            Text(
+                text = driverData.name,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+
+            Text(
+                text = "Professional Driver",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+fun PersonalInfoCard(
+    driverData: DriverProfileData,
+    modifier: Modifier = Modifier
+) {
+    ProfileCard(
+        title = "Personal Information",
+        icon = Icons.Default.Person,
+        modifier = modifier
+    ) {
+        ProfileInfoRow("Phone", driverData.phone)
+        Spacer(modifier = Modifier.height(12.dp))
+        ProfileInfoRow("Email", driverData.email)
+        Spacer(modifier = Modifier.height(12.dp))
+        ProfileInfoRow("Fleet", driverData.fleetName)
+        Spacer(modifier = Modifier.height(12.dp))
+        ProfileInfoRow("Driver ID", driverData.driverId)
+    }
+}
+
+@Composable
+fun LicenseInfoCard(
+    driverData: DriverProfileData,
+    modifier: Modifier = Modifier
+) {
+    val daysUntilExpiry = remember {
+        // Calculate days until expiry (simplified for demo)
+        val expiryDate = driverData.licenseExpiry
+        // In a real app, you'd parse the date and calculate the difference
+        45 // Mock value
+    }
+
+    ProfileCard(
+        title = "License Information",
+        icon = Icons.Default.Person,
+        modifier = modifier
+    ) {
+        ProfileInfoRow("License Number", driverData.licenseNumber)
+        Spacer(modifier = Modifier.height(12.dp))
+        ProfileInfoRow("License Type", driverData.licenseType)
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        // Expiry date with color coding
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Expiry Date",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = driverData.licenseExpiry,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = when {
+                        daysUntilExpiry < 0 -> MaterialTheme.colorScheme.error
+                        daysUntilExpiry < 30 -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.onSurface
+                    },
+                    fontWeight = FontWeight.Normal
+                )
+                if (daysUntilExpiry < 30) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = "Expiring Soon",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        // License Image Section
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "License Photo",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Medium
+            )
+            if (driverData.licenseImage != null) {
+                // TODO: Show license image thumbnail
+                Text(
+                    text = "View",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { /* TODO: Show full image */ }
+                )
+            } else {
+                Text(
+                    text = "Add Photo",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.clickable { /* TODO: Add license photo */ }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun VehicleDetailsCard(
+    driverData: DriverProfileData,
+    modifier: Modifier = Modifier
+) {
+    ProfileCard(
+        title = "Vehicle Details",
+        icon = Icons.Default.Person,
+        modifier = modifier
+    ) {
+        // Truck Information
+        Text(
+            text = "Truck Information",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        
+        ProfileInfoRow("License Plate", driverData.vehiclePlate)
+        Spacer(modifier = Modifier.height(8.dp))
+        ProfileInfoRow("Make & Model", "${driverData.vehicleMake} ${driverData.vehicleModel}")
+        Spacer(modifier = Modifier.height(8.dp))
+        ProfileInfoRow("VIN", driverData.vehicleVin)
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        // Trailer Information
+        Text(
+            text = "Trailer Information",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+        
+        ProfileInfoRow("Trailer Plate", driverData.trailerPlate)
+        Spacer(modifier = Modifier.height(8.dp))
+        ProfileInfoRow("Trailer Type", driverData.trailerType)
+    }
+}
+
+@Composable
+fun ProfileCard(
+    title: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            // Card Header
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 16.dp)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            
+            // Card Content
+            content()
+        }
+    }
+}
+
+@Composable
+fun ProfileInfoRow(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Normal,
+            modifier = Modifier.weight(1f),
+            textAlign = androidx.compose.ui.text.style.TextAlign.End
+        )
+    }
+}
+
+// Data class to hold driver profile information
+data class DriverProfileData(
+    val name: String,
+    val email: String,
+    val phone: String,
+    val fleetName: String,
+    val driverId: String,
+    val licenseNumber: String,
+    val licenseType: String,
+    val licenseExpiry: String,
+    val licenseImage: String?,
+    val vehiclePlate: String,
+    val vehicleMake: String,
+    val vehicleModel: String,
+    val vehicleVin: String,
+    val trailerPlate: String,
+    val trailerType: String
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeScreen(
+    userName: String,
+    onNavigateToProfile: () -> Unit,
+    onNavigateToMap: () -> Unit,
+    onLogout: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var selectedTripTab by remember { mutableStateOf(TripTab.COMPLETED) }
+    var showMenu by remember { mutableStateOf(false) }
+    var showTransportRequest by remember { mutableStateOf(false) }
+    
+    // Mock tow truck request data
+    val transportRequest = remember {
+        TransportRequest(
+            id = "TT-2024-001",
+            customerName = "Sarah Johnson",
+            customerRating = 4.6f,
+            customerReviews = 85,
+            customerPhone = "+1 (555) 987-6543",
+            pickupAddress = "I-90 Exit 15, Chicago",
+            pickupDistance = "1.8 miles away",
+            dropoffAddress = "AutoZone - 789 Service Rd, Chicago",
+            timeRequest = "URGENT - Stranded",
+            scheduledTime = null,
+            vehicleType = "2019 Honda Civic",
+            loadType = "Broken down vehicle",
+            loadWeight = "3,200 lbs",
+            specialNotes = "Engine won't start, battery dead, needs jump start or tow",
+            pickupLatLng = LatLng(41.8781, -87.6298),
+            dropoffLatLng = LatLng(41.8800, -87.6300)
+        )
+    }
+    
+    // Mock data - in a real app, this would come from API/database
+    val tripsData = remember {
+        listOf(
+            TripData(
+                id = "1",
+                pickup = "Miami, FL",
+                dropoff = "Atlanta, GA",
+                departureTime = "2024-01-10 10:00",
+                estimatedArrival = "2024-01-11 16:00",
+                truckInfo = "Freightliner #TRK-7890",
+                estimatedEarnings = 650.0,
+                status = TripStatus.COMPLETED,
+                actualEarnings = 650.0
+            ),
+            TripData(
+                id = "2",
+                pickup = "Chicago, IL",
+                dropoff = "Detroit, MI",
+                departureTime = "2024-01-08 14:00",
+                estimatedArrival = "2024-01-09 20:00",
+                truckInfo = "Freightliner #TRK-7890",
+                estimatedEarnings = 580.0,
+                status = TripStatus.COMPLETED,
+                actualEarnings = 580.0
+            ),
+            TripData(
+                id = "3",
+                pickup = "Seattle, WA",
+                dropoff = "Portland, OR",
+                departureTime = "2024-01-05 09:00",
+                estimatedArrival = "2024-01-05 15:00",
+                truckInfo = "Freightliner #TRK-7890",
+                estimatedEarnings = 420.0,
+                status = TripStatus.COMPLETED,
+                actualEarnings = 420.0
+            )
+        )
+    }
+    
+    val earningsData = remember {
+        EarningsData(
+            daily = 1250.0,
+            weekly = 4850.0,
+            monthly = 18200.0
+        )
+    }
+
+    // Simulate transport request after 3 seconds
+    LaunchedEffect(Unit) {
+        delay(3000)
+        showTransportRequest = true
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Header Section
+            item {
+                HomeHeader(
+                    userName = userName,
+                    onProfileClick = onNavigateToProfile,
+                    onNotificationClick = { /* TODO: Show notifications */ },
+                    onMenuClick = { showMenu = true },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Quick Actions
+            item {
+                QuickActionsSection(
+                    onNavigateToMap = onNavigateToMap,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Earnings Summary
+            item {
+                EarningsSummaryCard(
+                    earningsData = earningsData,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Trips Section
+            item {
+                TripsSection(
+                    trips = tripsData,
+                    selectedTab = selectedTripTab,
+                    onTabSelected = { selectedTripTab = it },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            // Payment Methods
+            item {
+                PaymentMethodsCard(
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        // Transport Request Overlay
+        if (showTransportRequest) {
+            TransportRequestOverlay(
+                request = transportRequest,
+                onAccept = {
+                    showTransportRequest = false
+                    // TODO: Navigate to pickup location
+                },
+                onReject = {
+                    showTransportRequest = false
+                    // TODO: Send rejection feedback
+                },
+                onTimeout = {
+                    showTransportRequest = false
+                    // TODO: Auto-reject logic
+                }
+            )
+        }
+    }
+
+    // Menu Modal
+    if (showMenu) {
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { showMenu = false }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Button(
+                    onClick = {
+                        showMenu = false
+                        onNavigateToMap()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Map View")
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        showMenu = false
+                        onNavigateToProfile()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Profile")
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        showMenu = false
+                        onLogout()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Logout")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TransportRequestOverlay(
+    request: TransportRequest,
+    onAccept: () -> Unit,
+    onReject: () -> Unit,
+    onTimeout: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var timeRemaining by remember { mutableStateOf(30) }
+    var isExpanded by remember { mutableStateOf(false) }
+
+    // Countdown timer
+    LaunchedEffect(Unit) {
+        while (timeRemaining > 0) {
+            delay(1000)
+            timeRemaining--
+        }
+        if (timeRemaining <= 0) {
+            onTimeout()
+        }
+    }
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = { /* Prevent dismiss */ }) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .wrapContentHeight()
+                .then(modifier),
+            elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Header with countdown
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "🚨 TOW TRUCK REQUEST",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = "${timeRemaining}s",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (timeRemaining <= 10) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Customer Details
+                CustomerDetailsSection(request = request)
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Trip Details
+                TripDetailsSection(request = request)
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Cargo Details
+                CargoDetailsSection(request = request)
+
+                // Expandable Map Section
+                if (isExpanded) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    MapPreviewSection(request = request)
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Expand/Collapse Button
+                TextButton(
+                    onClick = { isExpanded = !isExpanded },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.Person else Icons.Default.Person,
+                        contentDescription = if (isExpanded) "Collapse" else "Expand"
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(if (isExpanded) "Hide Map" else "Show Map")
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Action Buttons
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = onReject,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Reject")
+                    }
+
+                    Button(
+                        onClick = onAccept,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Accept")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CustomerDetailsSection(
+    request: TransportRequest,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Customer Details",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = request.customerName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "${request.customerRating} (${request.customerReviews} reviews)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Phone,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Tap to call",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.clickable { /* TODO: Make phone call */ }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun TripDetailsSection(
+    request: TransportRequest,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Service Details",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.LocationOn,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Breakdown: ${request.pickupAddress}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        text = "(${request.pickupDistance})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.LocationOn,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Destination: ${request.dropoffAddress}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Time: ${request.timeRequest}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun CargoDetailsSection(
+    request: TransportRequest,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Vehicle Details",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Customer Vehicle: ${request.vehicleType}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Issue: ${request.loadType} (${request.loadWeight})",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+            
+            if (request.specialNotes.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Notes: ${request.specialNotes}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MapPreviewSection(
+    request: TransportRequest,
+    modifier: Modifier = Modifier
+) {
+    var showNavigation by remember { mutableStateOf(false) }
+    
+    if (showNavigation) {
+        NavigationScreen(
+            request = request,
+            onBackPressed = { showNavigation = false }
+        )
+    }
+    
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                text = "Breakdown Location",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Interactive map preview with navigation button
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                    )
+                    .clickable { showNavigation = true },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LocationOn,
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Tap to Start Navigation",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Location: ${request.pickupAddress}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = { showNavigation = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LocationOn,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Start Navigation")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun NavigationScreen(
+    request: TransportRequest,
+    onBackPressed: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val currentLocation by AppLocationManager.location.collectAsState()
+    
+    var routePolyline by remember { mutableStateOf<List<LatLng>>(emptyList()) }
+    var estimatedDuration by remember { mutableStateOf("") }
+    var estimatedDistance by remember { mutableStateOf("") }
+    var trafficInfo by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(true) }
+    
+    // Calculate route when location is available
+    LaunchedEffect(currentLocation) {
+        currentLocation?.let { driverLocation ->
+            scope.launch {
+                try {
+                    // In a real app, you would use Google Directions API here
+                    // For now, we'll create a simple route
+                    val route = calculateRoute(driverLocation, request.pickupLatLng)
+                    routePolyline = route
+                    
+                    // Mock traffic and duration data
+                    estimatedDuration = "15 min"
+                    estimatedDistance = "8.2 km"
+                    trafficInfo = "Moderate traffic"
+                    isLoading = false
+                } catch (e: Exception) {
+                    // Handle error
+                    isLoading = false
+                }
+            }
+        }
+    }
+    
+    Box(modifier = modifier.fillMaxSize()) {
+        // Google Maps with navigation
+        GoogleMap(
+            modifier = Modifier.fillMaxSize(),
+            cameraPositionState = rememberCameraPositionState {
+                position = CameraPosition.fromLatLngZoom(
+                    currentLocation ?: request.pickupLatLng,
+                    15f
+                )
+            },
+            properties = MapProperties(
+                isMyLocationEnabled = true,
+                mapType = MapType.NORMAL
+            ),
+            uiSettings = MapUiSettings(
+                zoomControlsEnabled = false,
+                myLocationButtonEnabled = true,
+                compassEnabled = true
+            )
+        ) {
+            // Driver's current location marker
+            currentLocation?.let { location ->
+                Marker(
+                    state = MarkerState(position = location),
+                    title = "Your Location",
+                    snippet = "Driver's current position"
+                )
+            }
+            
+            // Pickup location marker
+            Marker(
+                state = MarkerState(position = request.pickupLatLng),
+                title = "Pickup Location",
+                snippet = request.pickupAddress,
+                icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)
+            )
+            
+            // Route polyline
+            if (routePolyline.isNotEmpty()) {
+                Polyline(
+                    points = routePolyline,
+                    color = MaterialTheme.colorScheme.primary,
+                    width = 8f
+                )
+            }
+        }
+        
+        // Top navigation bar
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .align(Alignment.TopCenter),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBackPressed) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back"
+                    )
+                }
+                
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Navigation to Pickup",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (isLoading) {
+                        Text(
+                            text = "Calculating route...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            text = "$estimatedDuration • $estimatedDistance",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                
+                IconButton(
+                    onClick = {
+                        // Launch Google Maps app for turn-by-turn navigation
+                        val gmmIntentUri = android.net.Uri.parse(
+                            "google.navigation:q=${request.pickupLatLng.latitude},${request.pickupLatLng.longitude}"
+                        )
+                        val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri).apply {
+                            setPackage("com.google.android.apps.maps")
+                        }
+                        if (mapIntent.resolveActivity(context.packageManager) != null) {
+                            context.startActivity(mapIntent)
+                        }
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LocationOn,
+                        contentDescription = "Open in Maps",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+        
+        // Trip details overlay at bottom
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .align(Alignment.BottomCenter),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                // Traffic and route info
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Estimated Arrival",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = estimatedDuration,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = "Distance",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = estimatedDistance,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Traffic info
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = trafficInfo,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                // Customer info
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = request.customerName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = request.pickupAddress,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    
+                    IconButton(
+                        onClick = {
+                            // Make phone call to customer
+                            val intent = Intent(Intent.ACTION_DIAL).apply {
+                                data = android.net.Uri.parse("tel:${request.customerPhone}")
+                            }
+                            context.startActivity(intent)
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Phone,
+                            contentDescription = "Call Customer",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Helper function to calculate route (simplified for demo)
+private suspend fun calculateRoute(origin: LatLng, destination: LatLng): List<LatLng> {
+    // In a real app, you would use Google Directions API
+    // For now, return a simple straight line route
+    return listOf(origin, destination)
+}
+
+@Composable
+fun HomeHeader(
+    userName: String,
+    onProfileClick: () -> Unit,
+    onNotificationClick: () -> Unit,
+    onMenuClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val greeting = remember {
+        val hour = java.time.LocalTime.now().hour
+        when {
+            hour < 12 -> "Good Morning"
+            hour < 17 -> "Good Afternoon"
+            else -> "Good Evening"
+        }
+    }
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Profile Section
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.clickable { onProfileClick() }
+        ) {
+            // Profile Avatar
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = androidx.compose.foundation.shape.CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = userName.take(1).uppercase(),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            
+            Spacer(modifier = Modifier.width(12.dp))
+            
+            // Greeting and Name
+            Column {
+                Text(
+                    text = greeting,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = userName,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // Action Buttons
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Notifications
+            Box {
+                IconButton(onClick = onNotificationClick) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = "Notifications",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                // Notification badge
+                Box(
+                    modifier = Modifier
+                        .size(16.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.error,
+                            shape = androidx.compose.foundation.shape.CircleShape
+                        )
+                        .align(Alignment.TopEnd),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "3",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onError
+                    )
+                }
+            }
+            
+            // Menu
+            IconButton(onClick = onMenuClick) {
+                Icon(
+                    imageVector = Icons.Default.Menu,
+                    contentDescription = "Menu"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun QuickActionsSection(
+    onNavigateToMap: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Quick Actions",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                QuickActionButton(
+                    icon = Icons.Default.Place,
+                    label = "Map View",
+                    onClick = onNavigateToMap
+                )
+                QuickActionButton(
+                    icon = Icons.Default.Person,
+                    label = "Schedule",
+                    onClick = { /* TODO: Navigate to schedule */ }
+                )
+                QuickActionButton(
+                    icon = Icons.Default.Person,
+                    label = "History",
+                    onClick = { /* TODO: Navigate to history */ }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun QuickActionButton(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.clickable { onClick() },
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = androidx.compose.foundation.shape.CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+fun EarningsSummaryCard(
+    earningsData: EarningsData,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Earnings Summary",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                EarningsItem("Today", earningsData.daily)
+                EarningsItem("This Week", earningsData.weekly)
+                EarningsItem("This Month", earningsData.monthly)
+            }
+        }
+    }
+}
+
+@Composable
+fun EarningsItem(
+    period: String,
+    amount: Double,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "$${String.format("%.0f", amount)}",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = period,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+fun TripsSection(
+    trips: List<TripData>,
+    selectedTab: TripTab,
+    onTabSelected: (TripTab) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Text(
+                text = "Trips",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            
+            // Tab Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                TripTab.values().forEach { tab ->
+                    TripTabButton(
+                        tab = tab,
+                        isSelected = selectedTab == tab,
+                        onClick = { onTabSelected(tab) }
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            // Trip Cards
+            val filteredTrips = trips.filter { it.status == selectedTab.status }
+            if (filteredTrips.isNotEmpty()) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    filteredTrips.forEach { trip ->
+                        TripCard(trip = trip)
+                    }
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "No ${selectedTab.title.lowercase()} trips",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TripTabButton(
+    tab: TripTab,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = modifier,
+        colors = ButtonDefaults.textButtonColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+        )
+    ) {
+        Text(
+            text = tab.title,
+            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+        )
+    }
+}
+
+@Composable
+fun TripCard(
+    trip: TripData,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // Route
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.LocationOn,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "${trip.pickup} → ${trip.dropoff}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Date/Time
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Departure: ${trip.departureTime}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(4.dp))
+            
+            // Truck Info
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = trip.truckInfo,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Earnings
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (trip.status == TripStatus.COMPLETED) "Paid:" else "Estimated:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "$${String.format("%.0f", trip.actualEarnings ?: trip.estimatedEarnings)}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun PaymentMethodsCard(
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Payment Methods",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            PaymentMethodItem(
+                icon = Icons.Default.Person,
+                title = "Direct Deposit",
+                subtitle = "Chase Bank ****1234",
+                isDefault = true
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            PaymentMethodItem(
+                icon = Icons.Default.Person,
+                title = "PayPal",
+                subtitle = "john.doe@email.com",
+                isDefault = false
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            OutlinedButton(
+                onClick = { /* TODO: Add payment method */ },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Add Payment Method")
+            }
+        }
+    }
+}
+
+@Composable
+fun PaymentMethodItem(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    isDefault: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp)
+        )
+        
+        Spacer(modifier = Modifier.width(12.dp))
+        
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        
+        if (isDefault) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ),
+                modifier = Modifier.padding(start = 8.dp)
+            ) {
+                Text(
+                    text = "Default",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+// Data class for transport request
+data class TransportRequest(
+    val id: String,
+    val customerName: String,
+    val customerRating: Float,
+    val customerReviews: Int,
+    val customerPhone: String,
+    val pickupAddress: String,
+    val pickupDistance: String,
+    val dropoffAddress: String,
+    val timeRequest: String,
+    val scheduledTime: String?,
+    val vehicleType: String,
+    val loadType: String,
+    val loadWeight: String,
+    val specialNotes: String,
+    val pickupLatLng: LatLng,
+    val dropoffLatLng: LatLng
+)
+
+// Data classes and enums
+data class TripData(
+    val id: String,
+    val pickup: String,
+    val dropoff: String,
+    val departureTime: String,
+    val estimatedArrival: String,
+    val truckInfo: String,
+    val estimatedEarnings: Double,
+    val status: TripStatus,
+    val actualEarnings: Double? = null
+)
+
+data class EarningsData(
+    val daily: Double,
+    val weekly: Double,
+    val monthly: Double
+)
+
+enum class TripTab(val title: String, val status: TripStatus) {
+    ACTIVE("Active", TripStatus.ACTIVE),
+    COMPLETED("Completed", TripStatus.COMPLETED)
+}
+
+enum class TripStatus {
+    UPCOMING, ACTIVE, COMPLETED
 }
