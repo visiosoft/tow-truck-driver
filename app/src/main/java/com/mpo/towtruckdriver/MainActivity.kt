@@ -75,6 +75,21 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.window.Dialog
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import androidx.compose.material3.Switch
+import androidx.compose.material3.RadioButton
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 
 // Location manager to handle location state
 object AppLocationManager {
@@ -212,19 +227,54 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AppBanner(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.primary)
-            .padding(16.dp),
-        contentAlignment = Alignment.Center
+    Card(
+        modifier = modifier,
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primary
+        )
     ) {
+        Row(
+            modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.LocationOn,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
         Text(
-            text = "Tow Truck Driver",
+                    text = "TowTruck Pro",
             color = MaterialTheme.colorScheme.onPrimary,
-            fontSize = 24.sp,
+                    fontSize = 20.sp,
             fontWeight = FontWeight.Bold
         )
+            }
+            
+            // Status indicator
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f)
+                ),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
+            ) {
+                Text(
+                    text = "Online",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+            }
+        }
     }
 }
 
@@ -331,7 +381,10 @@ fun MapScreenWithMenu(
                             showMenu = false
                             onHome()
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFDAA520) // Goldenrod
+                        )
                     ) {
                         Text("Home")
                     }
@@ -341,7 +394,10 @@ fun MapScreenWithMenu(
                             showMenu = false
                             onProfile()
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFDAA520) // Goldenrod
+                        )
                     ) {
                         Text("Profile")
                     }
@@ -352,7 +408,7 @@ fun MapScreenWithMenu(
                             onLogout()
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
                     ) {
                         Text("Logout")
                     }
@@ -512,7 +568,10 @@ fun MapScreen(
                     Button(
                         onClick = {
                             context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
-                        }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFDAA520) // Goldenrod
+                        )
                     ) {
                         Text("Enable Location Services")
                     }
@@ -1699,9 +1758,23 @@ fun HomeScreen(
     onLogout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var selectedTripTab by remember { mutableStateOf(TripTab.COMPLETED) }
+    var selectedTripTab by remember { mutableStateOf(TripTab.ACTIVE) }
     var showMenu by remember { mutableStateOf(false) }
     var showTransportRequest by remember { mutableStateOf(false) }
+    // Add online status state here
+    var isOnline by remember { mutableStateOf(false) }
+    var selectedStatus by remember { mutableStateOf(DriverStatus.AVAILABLE) }
+    var showJobCompletionDialog by remember { mutableStateOf(false) }
+    // Add activeJob state
+    var activeJob by remember { mutableStateOf<TripData?>(null) }
+    var showLiveRouteMap by remember { mutableStateOf(false) }
+    
+    // Auto-switch to Active tab when there's an active job
+    LaunchedEffect(activeJob) {
+        if (activeJob != null) {
+            selectedTripTab = TripTab.ACTIVE
+        }
+    }
     
     // Mock tow truck request data
     val transportRequest = remember {
@@ -1713,15 +1786,16 @@ fun HomeScreen(
             customerPhone = "+1 (555) 987-6543",
             pickupAddress = "I-90 Exit 15, Chicago",
             pickupDistance = "1.8 miles away",
-            dropoffAddress = "AutoZone - 789 Service Rd, Chicago",
+            dropoffAddress = "Shell Station, Main St",
             timeRequest = "URGENT - Stranded",
             scheduledTime = null,
-            vehicleType = "2019 Honda Civic",
+            vehicleType = "Car",
             loadType = "Broken down vehicle",
             loadWeight = "3,200 lbs",
-            specialNotes = "Engine won't start, battery dead, needs jump start or tow",
+            specialNotes = "Battery Dead",
             pickupLatLng = LatLng(41.8781, -87.6298),
-            dropoffLatLng = LatLng(41.8800, -87.6300)
+            dropoffLatLng = LatLng(41.8800, -87.6300),
+            estimatedEarnings = 85.0
         )
     }
     
@@ -1797,6 +1871,17 @@ fun HomeScreen(
                 )
             }
 
+            // Online Status Section
+            item {
+                OnlineStatusSection(
+                    modifier = Modifier.fillMaxWidth(),
+                    isOnline = isOnline,
+                    onOnlineChange = { isOnline = it },
+                    selectedStatus = selectedStatus,
+                    onStatusChange = { selectedStatus = it }
+                )
+            }
+
             // Quick Actions
             item {
                 QuickActionsSection(
@@ -1816,10 +1901,17 @@ fun HomeScreen(
             // Trips Section
             item {
                 TripsSection(
-                    trips = tripsData,
+                    trips = if (activeJob != null) listOf(activeJob!!) + tripsData else tripsData,
                     selectedTab = selectedTripTab,
                     onTabSelected = { selectedTripTab = it },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    onCancelTrip = {
+                        activeJob = null
+                        selectedStatus = DriverStatus.AVAILABLE
+                    },
+                    onViewRoute = {
+                        showLiveRouteMap = true
+                    }
                 )
             }
 
@@ -1831,13 +1923,33 @@ fun HomeScreen(
             }
         }
 
-        // Transport Request Overlay
-        if (showTransportRequest) {
+        // Transport Request Overlay (only show if online)
+        AnimatedVisibility(
+            visible = showTransportRequest && isOnline,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
+        ) {
             TransportRequestOverlay(
                 request = transportRequest,
                 onAccept = {
                     showTransportRequest = false
-                    // TODO: Navigate to pickup location
+                            selectedStatus = DriverStatus.BUSY
+                            // Set activeJob
+                            activeJob = TripData(
+                                id = transportRequest.id,
+                                pickup = transportRequest.pickupAddress,
+                                dropoff = transportRequest.dropoffAddress,
+                                departureTime = "Now",
+                                estimatedArrival = "TBD",
+                                truckInfo = "Your Tow Truck",
+                                estimatedEarnings = 100.0, // Example, replace as needed
+                                status = TripStatus.ACTIVE
+                            )
+                            // Show live route map after a short delay to ensure location is available
+                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                                kotlinx.coroutines.delay(500) // Small delay to ensure location is ready
+                                showLiveRouteMap = true
+                            }
                 },
                 onReject = {
                     showTransportRequest = false
@@ -1846,6 +1958,64 @@ fun HomeScreen(
                 onTimeout = {
                     showTransportRequest = false
                     // TODO: Auto-reject logic
+                }
+            )
+        }
+
+        // Live Route Map (Full Screen)
+        AnimatedVisibility(
+            visible = showLiveRouteMap,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { it })
+        ) {
+            val userLocation by AppLocationManager.location.collectAsState(initial = null)
+            val fallbackLocation = LatLng(41.8781, -87.6298) // Default location if user location not available
+            
+            LiveRouteMap(
+                driverLocation = userLocation ?: fallbackLocation,
+                customerLocation = transportRequest.pickupLatLng,
+                onClose = { showLiveRouteMap = false },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // Job Completion Dialog
+        if (showJobCompletionDialog) {
+            AlertDialog(
+                onDismissRequest = { showJobCompletionDialog = false },
+                title = {
+                    Text("Job Completed!")
+                },
+                text = {
+                    Text("What would you like to do next?")
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            selectedStatus = DriverStatus.AVAILABLE
+                            activeJob = null
+                            showJobCompletionDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Green
+                        )
+                    ) {
+                        Text("Go Available")
+                    }
+                },
+                dismissButton = {
+                    Button(
+                        onClick = {
+                            isOnline = false
+                            activeJob = null
+                            showJobCompletionDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Red
+                        )
+                    ) {
+                        Text("Go Offline")
+                    }
                 }
             )
         }
@@ -1867,7 +2037,10 @@ fun HomeScreen(
                         showMenu = false
                         onNavigateToMap()
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFDAA520) // Goldenrod
+                    )
                 ) {
                     Text("Map View")
                 }
@@ -1877,9 +2050,28 @@ fun HomeScreen(
                         showMenu = false
                         onNavigateToProfile()
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFDAA520) // Goldenrod
+                    )
                 ) {
                     Text("Profile")
+                }
+                // Show "Complete Job" button only when driver is busy
+                if (selectedStatus == DriverStatus.BUSY) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            showMenu = false
+                            showJobCompletionDialog = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFDAA520) // Goldenrod
+                        )
+                    ) {
+                        Text("Complete Job")
+                    }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
@@ -1888,7 +2080,7 @@ fun HomeScreen(
                         onLogout()
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
                 ) {
                     Text("Logout")
                 }
@@ -1907,6 +2099,10 @@ fun TransportRequestOverlay(
 ) {
     var timeRemaining by remember { mutableStateOf(30) }
     var isExpanded by remember { mutableStateOf(false) }
+    var showNegotiateDialog by remember { mutableStateOf(false) }
+    var negotiatedPrice by remember { mutableStateOf("") }
+    var isNegotiating by remember { mutableStateOf(false) }
+    var negotiationTimeRemaining by remember { mutableStateOf(30) }
 
     // Countdown timer
     LaunchedEffect(Unit) {
@@ -1919,6 +2115,27 @@ fun TransportRequestOverlay(
         }
     }
 
+    // Negotiation countdown timer with automatic response
+    LaunchedEffect(isNegotiating) {
+        if (isNegotiating) {
+            // Simulate customer response after 5 seconds
+            delay(5000)
+            
+            // Automatic acceptance/rejection logic
+            val originalPrice = request.estimatedEarnings ?: 75.0
+            val negotiatedPriceValue = negotiatedPrice.replace("$", "").toDoubleOrNull() ?: originalPrice
+            val isAccepted = negotiatedPriceValue <= originalPrice * 1.2
+            if (isAccepted) {
+                isNegotiating = false
+                showNegotiateDialog = false
+                onAccept()
+            } else {
+                isNegotiating = false
+                showNegotiateDialog = false
+            }
+        }
+    }
+
     androidx.compose.ui.window.Dialog(onDismissRequest = { /* Prevent dismiss */ }) {
         Card(
             modifier = Modifier
@@ -1928,85 +2145,256 @@ fun TransportRequestOverlay(
             elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surface
-            )
+            ),
+            shape = MaterialTheme.shapes.large
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Header with countdown
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "🚨 TOW TRUCK REQUEST",
-                        style = MaterialTheme.typography.titleLarge,
+                        text = if (isNegotiating) "Negotiation" else "Tow Request",
+                        style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.error
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "${timeRemaining}s",
+                        text = if (isNegotiating) "${negotiationTimeRemaining}s" else "${timeRemaining}s",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        color = if (timeRemaining <= 10) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                        color = if ((isNegotiating && negotiationTimeRemaining <= 10) || (!isNegotiating && timeRemaining <= 10)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
-                // Customer Details
-                CustomerDetailsSection(request = request)
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Trip Details
-                TripDetailsSection(request = request)
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Cargo Details
-                CargoDetailsSection(request = request)
-
-                // Expandable Map Section
-                if (isExpanded) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    MapPreviewSection(request = request)
+                if (isNegotiating) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Your Offer: $${negotiatedPrice}",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Waiting for customer response...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    // Info rows styled like main screen
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            // Dropoff Location
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Place,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Dropoff Location",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = request.dropoffAddress,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                            // Vehicle Type
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Vehicle Type",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = request.vehicleType,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                            // Problem
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Problem",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    Text(
+                                        text = request.specialNotes,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                            // Offer Amount
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Offer",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "$${String.format("%.0f", request.estimatedEarnings ?: 75.0)}",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                                    )
+                                }
+                            }
+                        }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Expand/Collapse Button
-                TextButton(
-                    onClick = { isExpanded = !isExpanded },
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                ) {
-                    Icon(
-                        imageVector = if (isExpanded) Icons.Default.Person else Icons.Default.Person,
-                        contentDescription = if (isExpanded) "Collapse" else "Expand"
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (isExpanded) "Hide Map" else "Show Map")
+                    // Map snippet in a card
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Text(
+                                text = "Vehicle's Current Location",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(150.dp)
+                                    .background(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                                    )
+                            ) {
+                                val userLocation by AppLocationManager.location.collectAsState(initial = null)
+                                GoogleMap(
+                                    modifier = Modifier.fillMaxSize(),
+                                    cameraPositionState = rememberCameraPositionState {
+                                        position = CameraPosition.fromLatLngZoom(
+                                            request.pickupLatLng,
+                                            15f
+                                        )
+                                    },
+                                    properties = MapProperties(
+                                        mapType = MapType.NORMAL,
+                                        isMyLocationEnabled = false
+                                    )
+                                ) {
+                                    Marker(
+                                        state = MarkerState(position = request.pickupLatLng),
+                                        title = "Customer Location",
+                                        snippet = request.pickupAddress,
+                                        icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)
+                                    )
+                                    userLocation?.let { driverLocation ->
+                                        Marker(
+                                            state = MarkerState(position = driverLocation),
+                                            title = "Your Location",
+                                            snippet = "Driver",
+                                            icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)
+                                        )
+                                        Polyline(
+                                            points = listOf(driverLocation, request.pickupLatLng),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            width = 8f
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 // Action Buttons
+                if (!isNegotiating) {
                 Row(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp),
+                            .fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Button(
                         onClick = onReject,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error
+                                containerColor = Color.Red
                         )
                     ) {
                         Icon(
@@ -2017,12 +2405,11 @@ fun TransportRequestOverlay(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Reject")
                     }
-
                     Button(
                         onClick = onAccept,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
+                                containerColor = Color(0xFF006400) // Dark green
                         )
                     ) {
                         Icon(
@@ -2034,8 +2421,108 @@ fun TransportRequestOverlay(
                         Text("Accept")
                     }
                 }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedButton(
+                        onClick = { showNegotiateDialog = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = Color(0xFFDAA520) // Goldenrod
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Negotiate Price")
+                    }
+                } else {
+                    AnimatedVisibility(
+                        visible = isNegotiating,
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(32.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Waiting for customer response...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
         }
+    }
+
+    // Negotiate Price Dialog
+    if (showNegotiateDialog) {
+        AlertDialog(
+            onDismissRequest = { showNegotiateDialog = false },
+            title = {
+                Text(
+                    text = "Negotiate Price",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Enter your price offer:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    OutlinedTextField(
+                        value = negotiatedPrice,
+                        onValueChange = { negotiatedPrice = it },
+                        label = { Text("Price (e.g., $90)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (negotiatedPrice.isNotEmpty()) {
+                            isNegotiating = true
+                            negotiationTimeRemaining = 30
+                            showNegotiateDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFDAA520) // Goldenrod
+                    )
+                ) {
+                    Text("Send Offer")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showNegotiateDialog = false }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -2670,7 +3157,7 @@ fun HomeHeader(
     modifier: Modifier = Modifier
 ) {
     val greeting = remember {
-        val hour = java.time.LocalTime.now().hour
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         when {
             hour < 12 -> "Good Morning"
             hour < 17 -> "Good Afternoon"
@@ -2771,21 +3258,58 @@ fun QuickActionsSection(
     onNavigateToMap: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var isExpanded by remember { mutableStateOf(false) }
+    
     Card(
-        modifier = modifier,
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        modifier = modifier.clickable { isExpanded = !isExpanded },
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp)
+                .padding(16.dp)
         ) {
+            // Compact header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Menu,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "Quick Actions",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            
+            // Expanded content
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Spacer(modifier = Modifier.height(12.dp))
             
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2806,6 +3330,7 @@ fun QuickActionsSection(
                     label = "History",
                     onClick = { /* TODO: Navigate to history */ }
                 )
+                }
             }
         }
     }
@@ -2818,32 +3343,34 @@ fun QuickActionButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(
+    Card(
         modifier = modifier.clickable { onClick() },
-        horizontalAlignment = Alignment.CenterHorizontally
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
     ) {
-        Box(
+        Column(
             modifier = Modifier
-                .size(56.dp)
-                .background(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = androidx.compose.foundation.shape.CircleShape
-                ),
-            contentAlignment = Alignment.Center
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.size(24.dp)
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
             )
-        }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
-            textAlign = TextAlign.Center
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        }
     }
 }
 
@@ -2852,33 +3379,69 @@ fun EarningsSummaryCard(
     earningsData: EarningsData,
     modifier: Modifier = Modifier
 ) {
+    var isExpanded by remember { mutableStateOf(false) }
+    
     Card(
-        modifier = modifier,
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        modifier = modifier.clickable { isExpanded = !isExpanded },
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp)
+                .padding(16.dp)
         ) {
+            // Compact header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Earnings Summary",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "$${String.format("%.0f", earningsData.daily)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                 Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
+                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (isExpanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            // Expanded content
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Spacer(modifier = Modifier.height(12.dp))
             
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2887,6 +3450,7 @@ fun EarningsSummaryCard(
                 EarningsItem("Today", earningsData.daily)
                 EarningsItem("This Week", earningsData.weekly)
                 EarningsItem("This Month", earningsData.monthly)
+                }
             }
         }
     }
@@ -2898,21 +3462,31 @@ fun EarningsItem(
     amount: Double,
     modifier: Modifier = Modifier
 ) {
-    Column(
+    Card(
         modifier = modifier,
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = "$${String.format("%.0f", amount)}",
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.onPrimaryContainer
         )
         Text(
             text = period,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
         )
+        }
     }
 }
 
@@ -2921,23 +3495,88 @@ fun TripsSection(
     trips: List<TripData>,
     selectedTab: TripTab,
     onTabSelected: (TripTab) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onCancelTrip: (() -> Unit)? = null,
+    onViewRoute: (() -> Unit)? = null
 ) {
+    var isExpanded by remember { mutableStateOf(false) }
+    
     Card(
-        modifier = modifier,
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        modifier = modifier.clickable { isExpanded = !isExpanded },
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp)
+                .padding(16.dp)
         ) {
+            // Compact header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Place,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "Trips",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val activeTripsCount = trips.filter { it.status == TripStatus.ACTIVE }.size
+                    val hasActiveTrips = activeTripsCount > 0
+                    
+                    if (hasActiveTrips) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    
+                    Text(
+                        text = "${trips.filter { it.status == selectedTab.status }.size} ${selectedTab.title.lowercase()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (hasActiveTrips && selectedTab == TripTab.ACTIVE) 
+                            MaterialTheme.colorScheme.primary 
+                        else 
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (isExpanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+            
+            // Expanded content
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Spacer(modifier = Modifier.height(12.dp))
             
             // Tab Row
             Row(
@@ -2953,23 +3592,27 @@ fun TripsSection(
                 }
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
             
             // Trip Cards
             val filteredTrips = trips.filter { it.status == selectedTab.status }
             if (filteredTrips.isNotEmpty()) {
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     filteredTrips.forEach { trip ->
-                        TripCard(trip = trip)
+                            TripCard(
+                                trip = trip,
+                                onCancel = if (trip.status == TripStatus.ACTIVE) onCancelTrip else null,
+                                onViewRoute = if (trip.status == TripStatus.ACTIVE) onViewRoute else null
+                            )
                     }
                 }
             } else {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(120.dp),
+                            .height(80.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -2977,6 +3620,7 @@ fun TripsSection(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    }
                 }
             }
         }
@@ -3008,13 +3652,18 @@ fun TripTabButton(
 @Composable
 fun TripCard(
     trip: TripData,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onCancel: (() -> Unit)? = null,
+    onViewRoute: (() -> Unit)? = null
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            containerColor = if (trip.status == TripStatus.ACTIVE) 
+                MaterialTheme.colorScheme.primaryContainer 
+            else 
+                MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
         Column(
@@ -3022,6 +3671,39 @@ fun TripCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
+            // Status indicator for active trips
+            if (trip.status == TripStatus.ACTIVE) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "ACTIVE",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Text(
+                        text = "In Progress",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+            
             // Route
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -3049,14 +3731,14 @@ fun TripCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = Icons.Default.Person,
+                    imageVector = Icons.Default.Schedule,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Departure: ${trip.departureTime}",
+                    text = if (trip.status == TripStatus.ACTIVE) "Started: ${trip.departureTime}" else "Departure: ${trip.departureTime}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3064,13 +3746,35 @@ fun TripCard(
             
             Spacer(modifier = Modifier.height(4.dp))
             
+            // Estimated arrival for active trips
+            if (trip.status == TripStatus.ACTIVE && trip.estimatedArrival != "TBD") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Timer,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "ETA: ${trip.estimatedArrival}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+            }
+            
             // Truck Info
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = Icons.Default.Person,
+                    imageVector = Icons.Default.LocalShipping,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(16.dp)
@@ -3103,6 +3807,53 @@ fun TripCard(
                     color = MaterialTheme.colorScheme.primary
                 )
             }
+            
+            // Action buttons for active trips
+            if (trip.status == TripStatus.ACTIVE) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // View Route button
+                    if (onViewRoute != null) {
+                        Button(
+                            onClick = onViewRoute,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFDAA520) // Goldenrod
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.LocationOn,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("View Route")
+                        }
+                    }
+                    
+                    // Cancel button
+                    if (onCancel != null) {
+                        Button(
+                            onClick = onCancel,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Cancel Trip")
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -3111,33 +3862,54 @@ fun TripCard(
 fun PaymentMethodsCard(
     modifier: Modifier = Modifier
 ) {
+    var isExpanded by remember { mutableStateOf(false) }
+    
     Card(
-        modifier = modifier,
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        modifier = modifier.clickable { isExpanded = !isExpanded },
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp)
+                .padding(16.dp)
         ) {
+            // Compact header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Payment Methods",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium
                 )
+                }
+                
                 Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
+                    imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = if (isExpanded) "Collapse" else "Expand",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
                 )
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            // Expanded content
+            if (isExpanded) {
+                Spacer(modifier = Modifier.height(12.dp))
             
             PaymentMethodItem(
                 icon = Icons.Default.Person,
@@ -3146,7 +3918,7 @@ fun PaymentMethodsCard(
                 isDefault = true
             )
             
-            Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
             
             PaymentMethodItem(
                 icon = Icons.Default.Person,
@@ -3155,7 +3927,7 @@ fun PaymentMethodsCard(
                 isDefault = false
             )
             
-            Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
             
             OutlinedButton(
                 onClick = { /* TODO: Add payment method */ },
@@ -3168,6 +3940,7 @@ fun PaymentMethodsCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Add Payment Method")
+                }
             }
         }
     }
@@ -3242,7 +4015,8 @@ data class TransportRequest(
     val loadWeight: String,
     val specialNotes: String,
     val pickupLatLng: LatLng,
-    val dropoffLatLng: LatLng
+    val dropoffLatLng: LatLng,
+    val estimatedEarnings: Double = 75.0
 )
 
 // Data classes and enums
@@ -3271,4 +4045,323 @@ enum class TripTab(val title: String, val status: TripStatus) {
 
 enum class TripStatus {
     UPCOMING, ACTIVE, COMPLETED
+}
+
+@Composable
+fun OnlineStatusSection(
+    modifier: Modifier = Modifier,
+    isOnline: Boolean,
+    onOnlineChange: (Boolean) -> Unit,
+    selectedStatus: DriverStatus,
+    onStatusChange: (DriverStatus) -> Unit
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+    
+    Card(
+        modifier = modifier.clickable { isExpanded = !isExpanded },
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // Compact header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Driver Status",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isOnline) "Online" else "Offline",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (isExpanded) "Collapse" else "Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+            
+            // Expanded content
+            if (isExpanded) {
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                // Online/Offline Toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = if (isOnline) "Online" else "Offline",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = if (isOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = if (isOnline) "Receiving requests" else "Not available",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = isOnline,
+                        onCheckedChange = onOnlineChange,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = MaterialTheme.colorScheme.primary,
+                            checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                        )
+                    )
+                }
+                
+                // Status Options (only visible when online)
+                if (isOnline) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    Text(
+                        text = "Availability",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    
+                    DriverStatus.values().forEach { status ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onStatusChange(status) }
+                                .padding(vertical = 2.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (selectedStatus == status) 
+                                    MaterialTheme.colorScheme.primaryContainer 
+                                else 
+                                    MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = selectedStatus == status,
+                                    onClick = { onStatusChange(status) },
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = MaterialTheme.colorScheme.primary
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = status.displayName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (selectedStatus == status) 
+                                        MaterialTheme.colorScheme.onPrimaryContainer 
+                                    else 
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+enum class DriverStatus(val displayName: String) {
+    AVAILABLE("Available for Immediate Dispatch"),
+    BUSY("On Another Job (Visible but Busy)")
+}
+
+@Composable
+fun LiveRouteMap(
+    driverLocation: LatLng,
+    customerLocation: LatLng,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var mapLoaded by remember { mutableStateOf(false) }
+    
+    Box(modifier = modifier.fillMaxSize()) {
+        GoogleMap(
+            modifier = Modifier.fillMaxSize(),
+            cameraPositionState = rememberCameraPositionState {
+                position = CameraPosition.fromLatLngZoom(
+                    driverLocation,
+                    12f
+                )
+            },
+            properties = MapProperties(
+                mapType = MapType.NORMAL,
+                isMyLocationEnabled = false
+            ),
+            onMapLoaded = {
+                mapLoaded = true
+            }
+        ) {
+            // Driver location marker
+            Marker(
+                state = MarkerState(position = driverLocation),
+                title = "Your Location",
+                snippet = "Driver",
+                icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)
+            )
+            
+            // Customer location marker
+            Marker(
+                state = MarkerState(position = customerLocation),
+                title = "Customer Location",
+                snippet = "Pickup Point",
+                icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)
+            )
+            
+            // Route polyline
+            Polyline(
+                points = listOf(driverLocation, customerLocation),
+                color = MaterialTheme.colorScheme.primary,
+                width = 8f
+            )
+        }
+        
+        // Close button
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                    shape = androidx.compose.foundation.shape.CircleShape
+                )
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Close",
+                tint = MaterialTheme.colorScheme.onSurface
+            )
+        }
+        
+        // Route info card
+        Card(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp)
+                .fillMaxWidth(),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = "🚗 Live Route to Customer",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            text = "Distance",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "1.8 miles",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    
+                    Column {
+                        Text(
+                            text = "Est. Time",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "5 min",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    
+                    Column {
+                        Text(
+                            text = "Earnings",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "$85",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+        }
+        
+        // Loading overlay if map not loaded
+        if (!mapLoaded) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.8f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Loading map...",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+        }
+    }
 }
