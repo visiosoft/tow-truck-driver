@@ -2,20 +2,20 @@ package com.mpo.towtruckdriver.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Professional Tow Truck Driver App Colors
-val PrimaryBlue = Color(0xFF1976D2)      // Professional blue
-val SecondaryOrange = Color(0xFFFF9800)   // Warning/urgency orange
+// Professional Tow Truck Driver App Colors - Ivory Theme
+val PrimaryBlue = Color(0xFFDAA520)      // Mustard primary
+val SecondaryOrange = Color(0xFFB8860B)   // Darker mustard secondary
 val SuccessGreen = Color(0xFF4CAF50)      // Success green
-val ErrorRed = Color(0xFFF44336)          // Error red
+val ErrorRed = Color(0xFFE57373)          // Softer error red
 val WarningAmber = Color(0xFFFFC107)      // Warning amber
 
-// Light Theme Colors
-val LightBackground = Color(0xFFFAFAFA)
-val LightSurface = Color(0xFFFFFFFF)
-val LightSurfaceVariant = Color(0xFFF5F5F5)
-val LightOnBackground = Color(0xFF1C1B1F)
-val LightOnSurface = Color(0xFF1C1B1F)
-val LightOnSurfaceVariant = Color(0xFF49454F)
+// Light Theme Colors - Ivory Theme with Black Text
+val LightBackground = Color(0xFFFFF8DC) // Ivory background
+val LightSurface = Color(0xFFFFFEF7) // Slightly lighter ivory
+val LightSurfaceVariant = Color(0xFFF5F5DC) // Slightly darker ivory
+val LightOnBackground = Color(0xFF000000) // Black text for better visibility
+val LightOnSurface = Color(0xFF000000) // Black text for better visibility
+val LightOnSurfaceVariant = Color(0xFF000000) // Black text for better visibility
 
 // Dark Theme Colors
 val DarkBackground = Color(0xFF121212)
@@ -25,10 +25,10 @@ val DarkOnBackground = Color(0xFFE6E1E5)
 val DarkOnSurface = Color(0xFFE6E1E5)
 val DarkOnSurfaceVariant = Color(0xFFCAC4D0)
 
-// Legacy colors for compatibility
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
+// Legacy colors for compatibility - Updated to white smoke
+val Purple80 = Color(0xFFF5F5F5) // White smoke
+val PurpleGrey80 = Color(0xFFF5F5F5) // White smoke
+val Pink80 = Color(0xFFF5F5F5) // White smoke
+val Purple40 = Color(0xFFF5F5F5) // White smoke
+val PurpleGrey40 = Color(0xFFF5F5F5) // White smoke
+val Pink40 = Color(0xFFF5F5F5) // White smoke

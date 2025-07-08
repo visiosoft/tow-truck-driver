@@ -6,7 +6,17 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.RingtoneManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -60,12 +70,17 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.SignalCellular4Bar
+import androidx.compose.material.icons.filled.SignalCellularOff
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
@@ -101,9 +116,143 @@ object AppLocationManager {
     }
 }
 
+// Network connectivity manager
+object NetworkConnectivityManager {
+    private val _isConnected = MutableStateFlow(false)
+    val isConnected = _isConnected.asStateFlow()
+
+    fun updateConnectionStatus(connected: Boolean) {
+        _isConnected.value = connected
+    }
+}
+
+// Utility functions for connectivity checking
+fun isNetworkAvailable(context: Context): Boolean {
+    val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+        val network = connectivityManager.activeNetwork ?: return false
+        val activeNetwork = connectivityManager.getNetworkCapabilities(network) ?: return false
+        
+        return when {
+            activeNetwork.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> true
+            activeNetwork.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> true
+            activeNetwork.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> true
+            else -> false
+        }
+    } else {
+        @Suppress("DEPRECATION")
+        val networkInfo = connectivityManager.activeNetworkInfo
+        @Suppress("DEPRECATION")
+        return networkInfo != null && networkInfo.isConnected
+    }
+}
+
+fun hasInternetAccess(context: Context): Boolean {
+    return isNetworkAvailable(context)
+}
+
+// Utility functions for location checking
+fun hasLocationPermission(context: Context): Boolean {
+    return ContextCompat.checkSelfPermission(
+        context, Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED ||
+           ContextCompat.checkSelfPermission(
+        context, Manifest.permission.ACCESS_COARSE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+}
+
+fun isLocationEnabled(context: Context): Boolean {
+    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+    return locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+           locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
+}
+
+// Sound and vibration manager for tow requests
+class TowRequestNotifier(private val context: Context) {
+    private var ringtone: android.media.Ringtone? = null
+    private var vibrator: Vibrator? = null
+    
+    init {
+        try {
+            // Get default notification ringtone
+            val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            ringtone = RingtoneManager.getRingtone(context, notification)
+            
+            // Get vibrator service
+            vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as Vibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+        } catch (e: Exception) {
+            println("Error initializing sound/vibration: ${e.message}")
+        }
+    }
+    
+    fun playTowRequestAlert() {
+        try {
+            // Play ringtone
+            ringtone?.let { rt ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val audioAttributes = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                    rt.audioAttributes = audioAttributes
+                }
+                rt.play()
+            }
+            
+            // Vibrate device
+            vibrator?.let { vib ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val vibrationEffect = VibrationEffect.createOneShot(
+                        1000, // Duration in milliseconds
+                        VibrationEffect.DEFAULT_AMPLITUDE
+                    )
+                    vib.vibrate(vibrationEffect)
+                } else {
+                    @Suppress("DEPRECATION")
+                    vib.vibrate(1000) // Duration in milliseconds
+                }
+            }
+        } catch (e: Exception) {
+            println("Error playing tow request alert: ${e.message}")
+        }
+    }
+    
+    fun stopAlert() {
+        try {
+            ringtone?.stop()
+        } catch (e: Exception) {
+            println("Error stopping alert: ${e.message}")
+        }
+    }
+}
+
+// Combined check for going online
+fun canGoOnline(context: Context): Boolean {
+    val hasLocation = hasLocationPermission(context)
+    val locationEnabled = isLocationEnabled(context)
+    val hasInternet = hasInternetAccess(context)
+    
+    val canGo = hasLocation && locationEnabled && hasInternet
+    
+    println("🔍 Connectivity Check:")
+    println("  📍 Location Permission: $hasLocation")
+    println("  📍 Location Services: $locationEnabled")
+    println("  🌐 Internet Access: $hasInternet")
+    println("  ✅ Can Go Online: $canGo")
+    
+    return canGo
+}
+
 class MainActivity : ComponentActivity() {
     private lateinit var sharedPreferences: SharedPreferences
     private lateinit var fusedLocationClient: FusedLocationProviderClient
+    private lateinit var connectivityManager: ConnectivityManager
 
     private val locationPermissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -127,6 +276,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         sharedPreferences = getSharedPreferences("TowTruckDriverPrefs", Context.MODE_PRIVATE)
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        
+        // Set up network connectivity monitoring
+        setupNetworkMonitoring()
+        
         enableEdgeToEdge()
         setContent {
             TowTruckDriverTheme {
@@ -139,6 +293,35 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun setupNetworkMonitoring() {
+        val networkCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                super.onAvailable(network)
+                NetworkConnectivityManager.updateConnectionStatus(true)
+                println("🌐 Network available")
+            }
+
+            override fun onLost(network: Network) {
+                super.onLost(network)
+                NetworkConnectivityManager.updateConnectionStatus(false)
+                println("❌ Network lost")
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                super.onCapabilitiesChanged(network, networkCapabilities)
+                val hasInternet = networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                NetworkConnectivityManager.updateConnectionStatus(hasInternet)
+                println("🌐 Network capabilities changed - Internet: $hasInternet")
+            }
+        }
+
+        val networkRequest = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+
+        connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
     }
 
     private fun requestLocationPermission() {
@@ -296,7 +479,7 @@ fun PasswordStrengthMeter(
     val color = when (strength) {
         PasswordStrength.WEAK -> Color.Red
         PasswordStrength.MEDIUM -> Color(0xFFFFA500) // Orange
-        PasswordStrength.STRONG -> Color.Green
+                    PasswordStrength.STRONG -> Color(0xFF006400) // Dark green
     }
 
     val text = when (strength) {
@@ -306,17 +489,17 @@ fun PasswordStrengthMeter(
     }
 
     Column(modifier = modifier) {
-        LinearProgressIndicator(
-            progress = when (strength) {
-                PasswordStrength.WEAK -> 0.33f
-                PasswordStrength.MEDIUM -> 0.66f
-                PasswordStrength.STRONG -> 1f
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp),
-            color = color
-        )
+            LinearProgressIndicator(
+        progress = { when (strength) {
+            PasswordStrength.WEAK -> 0.33f
+            PasswordStrength.MEDIUM -> 0.66f
+            PasswordStrength.STRONG -> 1f
+        }},
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(4.dp),
+        color = color
+    )
     Text(
             text = text,
             color = color,
@@ -324,22 +507,6 @@ fun PasswordStrengthMeter(
             modifier = Modifier.padding(top = 4.dp)
         )
     }
-}
-
-// Utility functions for location checking
-fun hasLocationPermission(context: Context): Boolean {
-    return ContextCompat.checkSelfPermission(
-        context, Manifest.permission.ACCESS_FINE_LOCATION
-    ) == PackageManager.PERMISSION_GRANTED ||
-           ContextCompat.checkSelfPermission(
-        context, Manifest.permission.ACCESS_COARSE_LOCATION
-    ) == PackageManager.PERMISSION_GRANTED
-}
-
-fun isLocationEnabled(context: Context): Boolean {
-    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
-    return locationManager.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
-           locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -433,6 +600,14 @@ fun MapScreen(
         mutableStateOf(isLocationEnabled(context))
     }
     
+    var hasInternetAccess by remember {
+        mutableStateOf(hasInternetAccess(context))
+    }
+    
+    var showConnectivityDialog by remember {
+        mutableStateOf(false)
+    }
+    
     var mapProperties by remember {
         mutableStateOf(
             MapProperties(
@@ -507,6 +682,16 @@ fun MapScreen(
     LaunchedEffect(hasLocationPermission) {
         mapProperties = mapProperties.copy(isMyLocationEnabled = hasLocationPermission)
     }
+    
+    // Periodic check for connectivity status
+    LaunchedEffect(Unit) {
+        while (true) {
+            hasLocationPermission = hasLocationPermission(context)
+            isLocationEnabled = isLocationEnabled(context)
+            hasInternetAccess = hasInternetAccess(context)
+            delay(2000) // Check every 2 seconds
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         GoogleMap(
@@ -540,8 +725,13 @@ fun MapScreen(
             Card(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(16.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                    .padding(16.dp)
+                    .offset(y = 120.dp), // Offset to avoid overlap with connectivity indicator
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFFFF8DC) // Ivory background
+                ),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
             ) {
                 Column(
                     modifier = Modifier
@@ -552,7 +742,8 @@ fun MapScreen(
                     Text(
                         text = "Location Services Disabled",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF000000) // Black text for better visibility
                     )
                     
                     Spacer(modifier = Modifier.height(8.dp))
@@ -560,7 +751,8 @@ fun MapScreen(
                     Text(
                         text = "Please enable location services to see your current position on the map.",
                         style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        color = Color(0xFF000000) // Black text for better visibility
                     )
                     
                     Spacer(modifier = Modifier.height(16.dp))
@@ -570,22 +762,65 @@ fun MapScreen(
                             context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFDAA520) // Goldenrod
-                        )
+                            containerColor = Color(0xFFDAA520) // Mustard
+                        ),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
                     ) {
-                        Text("Enable Location Services")
+                        Text(
+                            "Enable Location Services",
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 }
             }
         }
-
+        
+        // Show connectivity status indicator at bottom
+        ConnectivityStatusIndicator(
+            hasLocationPermission = hasLocationPermission,
+            isLocationEnabled = isLocationEnabled,
+            hasInternetAccess = hasInternetAccess,
+            userLocation = userLocation,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp)
+        )
+        
+        // Show connectivity check dialog
+        if (showConnectivityDialog) {
+            ConnectivityCheckDialog(
+                hasLocationPermission = hasLocationPermission,
+                isLocationEnabled = isLocationEnabled,
+                hasInternetAccess = hasInternetAccess,
+                onDismiss = { showConnectivityDialog = false },
+                onRequestLocationPermission = {
+                    // This will be handled by the MainActivity
+                    showConnectivityDialog = false
+                },
+                onOpenLocationSettings = {
+                    context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                    showConnectivityDialog = false
+                },
+                onOpenNetworkSettings = {
+                    context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
+                    showConnectivityDialog = false
+                }
+            )
+        }
+        
         // Show permission denied message
         if (!hasLocationPermission) {
             Card(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(16.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                    .padding(16.dp)
+                    .offset(y = 120.dp), // Offset to avoid overlap with connectivity indicator
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFFFF8DC) // Ivory background
+                ),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
             ) {
                 Column(
                     modifier = Modifier
@@ -596,7 +831,8 @@ fun MapScreen(
                     Text(
                         text = "Location Permission Required",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF000000) // Black text for better visibility
                     )
                     
                     Spacer(modifier = Modifier.height(8.dp))
@@ -604,7 +840,8 @@ fun MapScreen(
                     Text(
                         text = "Please grant location permission to see your current position on the map.",
                         style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        color = Color(0xFF000000) // Black text for better visibility
                     )
                 }
             }
@@ -636,6 +873,10 @@ fun WelcomeScreen(
             (context.getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager)
                 .isProviderEnabled(android.location.LocationManager.GPS_PROVIDER)
         )
+    }
+
+    var hasInternetAccess by remember {
+        mutableStateOf(hasInternetAccess(context))
     }
 
     // Auto-hide welcome note after 3 seconds
@@ -746,10 +987,11 @@ fun WelcomeScreen(
             }
         }
 
-        // Location status indicator (always visible at top)
-        LocationStatusIndicator(
+        // Connectivity status indicator (always visible at top)
+        ConnectivityStatusIndicator(
             hasLocationPermission = hasLocationPermission,
             isLocationEnabled = isLocationEnabled,
+            hasInternetAccess = hasInternetAccess,
             userLocation = AppLocationManager.location.collectAsState(initial = null).value,
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -1252,61 +1494,232 @@ fun MainScreenPreview() {
 }
 
 @Composable
-fun LocationStatusIndicator(
+fun ConnectivityCheckDialog(
     hasLocationPermission: Boolean,
     isLocationEnabled: Boolean,
+    hasInternetAccess: Boolean,
+    onDismiss: () -> Unit,
+    onRequestLocationPermission: () -> Unit,
+    onOpenLocationSettings: () -> Unit,
+    onOpenNetworkSettings: () -> Unit
+) {
+    val context = LocalContext.current
+    val isConnected by NetworkConnectivityManager.isConnected.collectAsState()
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Cannot Go Online",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "Please ensure the following are enabled:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                
+                // Internet connectivity
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (hasInternetAccess && isConnected) Icons.Default.Check else Icons.Default.Close,
+                        contentDescription = "Internet Status",
+                        tint = if (hasInternetAccess && isConnected) Color(0xFF006400) else Color.Red, // Dark green
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "Internet Connection",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Location permission
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (hasLocationPermission) Icons.Default.Check else Icons.Default.Close,
+                        contentDescription = "Location Permission",
+                        tint = if (hasLocationPermission) Color(0xFF006400) else Color.Red, // Dark green
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "Location Permission",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Location services
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isLocationEnabled) Icons.Default.Check else Icons.Default.Close,
+                        contentDescription = "Location Services",
+                        tint = if (isLocationEnabled) Color(0xFF006400) else Color.Red, // Dark green
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "Location Services",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    when {
+                        !hasLocationPermission -> onRequestLocationPermission()
+                        !isLocationEnabled -> onOpenLocationSettings()
+                        !hasInternetAccess || !isConnected -> onOpenNetworkSettings()
+                        else -> onDismiss()
+                    }
+                }
+            ) {
+                Text(
+                    text = when {
+                        !hasLocationPermission -> "Grant Permission"
+                        !isLocationEnabled -> "Enable Location"
+                        !hasInternetAccess || !isConnected -> "Network Settings"
+                        else -> "OK"
+                    }
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun ConnectivityStatusIndicator(
+    hasLocationPermission: Boolean,
+    isLocationEnabled: Boolean,
+    hasInternetAccess: Boolean,
     userLocation: LatLng?,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val isConnected by NetworkConnectivityManager.isConnected.collectAsState()
+    
+    // Define ivory color scheme
+    val ivoryColor = Color(0xFFFFF8DC) // Ivory background
+    val darkIvoryColor = Color(0xFFF5F5DC) // Slightly darker ivory
+    val textColor = Color(0xFF000000) // Black text for better visibility
+    val accentColor = Color(0xFFDAA520) // Mustard accent
+    val whiteSmokeColor = Color(0xFFF5F5F5) // White smoke for non-ivory areas
+    
     Card(
         modifier = modifier,
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
         colors = CardDefaults.cardColors(
-            containerColor = when {
-                !hasLocationPermission -> MaterialTheme.colorScheme.errorContainer
-                !isLocationEnabled -> MaterialTheme.colorScheme.errorContainer
-                userLocation == null -> MaterialTheme.colorScheme.surfaceVariant
-                else -> MaterialTheme.colorScheme.primaryContainer
-            }
-        )
+            containerColor = ivoryColor
+        ),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(16.dp)
         ) {
-            // Status indicator dot
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .background(
-                        color = when {
-                            !hasLocationPermission -> MaterialTheme.colorScheme.error
-                            !isLocationEnabled -> MaterialTheme.colorScheme.error
-                            userLocation == null -> MaterialTheme.colorScheme.onSurfaceVariant
-                            else -> MaterialTheme.colorScheme.primary
-                        },
-                        shape = androidx.compose.foundation.shape.CircleShape
-                    )
-            )
-
-            Text(
-                text = when {
-                    !hasLocationPermission -> "Location Permission Required"
-                    !isLocationEnabled -> "Location Services Disabled"
-                    userLocation == null -> "Getting Location..."
-                    else -> "Location Active"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = when {
-                    !hasLocationPermission -> MaterialTheme.colorScheme.onErrorContainer
-                    !isLocationEnabled -> MaterialTheme.colorScheme.onErrorContainer
-                    userLocation == null -> MaterialTheme.colorScheme.onSurfaceVariant
-                    else -> MaterialTheme.colorScheme.onPrimaryContainer
-                }
-            )
+            // Internet connectivity status
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    imageVector = if (hasInternetAccess && isConnected) Icons.Default.SignalCellular4Bar else Icons.Default.SignalCellularOff,
+                    contentDescription = "Internet Status",
+                    tint = if (hasInternetAccess && isConnected) accentColor else Color(0xFFE57373),
+                    modifier = Modifier.size(24.dp)
+                )
+                
+                Text(
+                    text = if (hasInternetAccess && isConnected) "Internet Connected" else "No Internet Access",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = textColor
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            // Location status
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.LocationOn,
+                    contentDescription = "Location Status",
+                    tint = when {
+                        !hasLocationPermission -> Color(0xFFE57373)
+                        !isLocationEnabled -> Color(0xFFE57373)
+                        userLocation == null -> Color(0xFF9E9E9E)
+                        else -> accentColor
+                    },
+                    modifier = Modifier.size(24.dp)
+                )
+                
+                Text(
+                    text = when {
+                        !hasLocationPermission -> "Location Permission Required"
+                        !isLocationEnabled -> "Location Services Disabled"
+                        userLocation == null -> "Getting Location..."
+                        else -> "Location Active"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = textColor
+                )
+            }
+            
+            // Overall status
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .background(
+                            color = if (canGoOnline(context)) accentColor else Color(0xFFE57373),
+                            shape = androidx.compose.foundation.shape.CircleShape
+                        )
+                )
+                
+                Text(
+                    text = if (canGoOnline(context)) "Ready to Go Online" else "Cannot Go Online",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = textColor
+                )
+            }
         }
     }
 }
@@ -1758,6 +2171,7 @@ fun HomeScreen(
     onLogout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var selectedTripTab by remember { mutableStateOf(TripTab.ACTIVE) }
     var showMenu by remember { mutableStateOf(false) }
     var showTransportRequest by remember { mutableStateOf(false) }
@@ -1769,10 +2183,26 @@ fun HomeScreen(
     var activeJob by remember { mutableStateOf<TripData?>(null) }
     var showLiveRouteMap by remember { mutableStateOf(false) }
     
+    // Connectivity state
+    var hasLocationPermission by remember { mutableStateOf(hasLocationPermission(context)) }
+    var isLocationEnabled by remember { mutableStateOf(isLocationEnabled(context)) }
+    var hasInternetAccess by remember { mutableStateOf(hasInternetAccess(context)) }
+    var showConnectivityDialog by remember { mutableStateOf(false) }
+    
     // Auto-switch to Active tab when there's an active job
     LaunchedEffect(activeJob) {
         if (activeJob != null) {
             selectedTripTab = TripTab.ACTIVE
+        }
+    }
+    
+    // Periodic check for connectivity status
+    LaunchedEffect(Unit) {
+        while (true) {
+            hasLocationPermission = hasLocationPermission(context)
+            isLocationEnabled = isLocationEnabled(context)
+            hasInternetAccess = hasInternetAccess(context)
+            delay(2000) // Check every 2 seconds
         }
     }
     
@@ -1838,18 +2268,25 @@ fun HomeScreen(
         )
     }
     
-    val earningsData = remember {
-        EarningsData(
-            daily = 1250.0,
-            weekly = 4850.0,
-            monthly = 18200.0
+    var earningsData by remember {
+        mutableStateOf(
+            EarningsData(
+                daily = 1250.0,
+                weekly = 4850.0,
+                monthly = 18200.0
+            )
         )
     }
 
+    // Sound notifier for tow requests
+    val towRequestNotifier = remember { TowRequestNotifier(context) }
+    
     // Simulate transport request after 3 seconds
     LaunchedEffect(Unit) {
         delay(3000)
         showTransportRequest = true
+        // Play sound and vibrate when tow request appears
+        towRequestNotifier.playTowRequestAlert()
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -1876,9 +2313,22 @@ fun HomeScreen(
                 OnlineStatusSection(
                     modifier = Modifier.fillMaxWidth(),
                     isOnline = isOnline,
-                    onOnlineChange = { isOnline = it },
+                    onOnlineChange = { newOnlineStatus ->
+                        if (newOnlineStatus) {
+                            // Check if can go online
+                            if (canGoOnline(context)) {
+                                isOnline = true
+                            } else {
+                                // Show connectivity dialog
+                                showConnectivityDialog = true
+                            }
+                        } else {
+                            isOnline = false
+                        }
+                    },
                     selectedStatus = selectedStatus,
-                    onStatusChange = { selectedStatus = it }
+                    onStatusChange = { selectedStatus = it },
+                    canGoOnline = canGoOnline(context)
                 )
             }
 
@@ -1894,6 +2344,7 @@ fun HomeScreen(
             item {
                 EarningsSummaryCard(
                     earningsData = earningsData,
+                    activeJob = activeJob,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -1906,6 +2357,12 @@ fun HomeScreen(
                     onTabSelected = { selectedTripTab = it },
                     modifier = Modifier.fillMaxWidth(),
                     onCancelTrip = {
+                        // Remove the earnings that were added when the job was accepted
+                        activeJob?.let { job ->
+                            earningsData = earningsData.copy(
+                                daily = earningsData.daily - job.estimatedEarnings
+                            )
+                        }
                         activeJob = null
                         selectedStatus = DriverStatus.AVAILABLE
                     },
@@ -1931,32 +2388,39 @@ fun HomeScreen(
         ) {
             TransportRequestOverlay(
                 request = transportRequest,
-                onAccept = {
+                onAccept = { negotiatedPrice ->
                     showTransportRequest = false
-                            selectedStatus = DriverStatus.BUSY
-                            // Set activeJob
-                            activeJob = TripData(
-                                id = transportRequest.id,
-                                pickup = transportRequest.pickupAddress,
-                                dropoff = transportRequest.dropoffAddress,
-                                departureTime = "Now",
-                                estimatedArrival = "TBD",
-                                truckInfo = "Your Tow Truck",
-                                estimatedEarnings = 100.0, // Example, replace as needed
-                                status = TripStatus.ACTIVE
-                            )
-                            // Show live route map after a short delay to ensure location is available
-                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
-                                kotlinx.coroutines.delay(500) // Small delay to ensure location is ready
-                                showLiveRouteMap = true
-                            }
+                    towRequestNotifier.stopAlert() // Stop the alert sound
+                    selectedStatus = DriverStatus.BUSY
+                    // Set activeJob with the negotiated price
+                    activeJob = TripData(
+                        id = transportRequest.id,
+                        pickup = transportRequest.pickupAddress,
+                        dropoff = transportRequest.dropoffAddress,
+                        departureTime = "Now",
+                        estimatedArrival = "TBD",
+                        truckInfo = "Your Tow Truck",
+                        estimatedEarnings = negotiatedPrice, // Use the negotiated price
+                        status = TripStatus.ACTIVE
+                    )
+                    // Update earnings data to include the negotiated price
+                    earningsData = earningsData.copy(
+                        daily = earningsData.daily + negotiatedPrice
+                    )
+                    // Show live route map after a short delay to ensure location is available
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                        kotlinx.coroutines.delay(500) // Small delay to ensure location is ready
+                        showLiveRouteMap = true
+                    }
                 },
                 onReject = {
                     showTransportRequest = false
+                    towRequestNotifier.stopAlert() // Stop the alert sound
                     // TODO: Send rejection feedback
                 },
                 onTimeout = {
                     showTransportRequest = false
+                    towRequestNotifier.stopAlert() // Stop the alert sound
                     // TODO: Auto-reject logic
                 }
             )
@@ -1974,11 +2438,34 @@ fun HomeScreen(
             LiveRouteMap(
                 driverLocation = userLocation ?: fallbackLocation,
                 customerLocation = transportRequest.pickupLatLng,
+                negotiatedPrice = activeJob?.estimatedEarnings,
                 onClose = { showLiveRouteMap = false },
                 modifier = Modifier.fillMaxSize()
             )
         }
 
+        // Connectivity Check Dialog
+        if (showConnectivityDialog) {
+            ConnectivityCheckDialog(
+                hasLocationPermission = hasLocationPermission,
+                isLocationEnabled = isLocationEnabled,
+                hasInternetAccess = hasInternetAccess,
+                onDismiss = { showConnectivityDialog = false },
+                onRequestLocationPermission = {
+                    // This will be handled by the MainActivity
+                    showConnectivityDialog = false
+                },
+                onOpenLocationSettings = {
+                    context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                    showConnectivityDialog = false
+                },
+                onOpenNetworkSettings = {
+                    context.startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
+                    showConnectivityDialog = false
+                }
+            )
+        }
+        
         // Job Completion Dialog
         if (showJobCompletionDialog) {
             AlertDialog(
@@ -1992,12 +2479,21 @@ fun HomeScreen(
                 confirmButton = {
                     Button(
                         onClick = {
+                            // Move active job to completed trips with actual earnings
+                            activeJob?.let { job ->
+                                val completedJob = job.copy(
+                                    status = TripStatus.COMPLETED,
+                                    actualEarnings = job.estimatedEarnings
+                                )
+                                // In a real app, you would save this to a database
+                                // For now, we'll just clear the active job
+                            }
                             selectedStatus = DriverStatus.AVAILABLE
                             activeJob = null
                             showJobCompletionDialog = false
                         },
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.Green
+                            containerColor = Color(0xFF006400) // Dark green
                         )
                     ) {
                         Text("Go Available")
@@ -2006,6 +2502,15 @@ fun HomeScreen(
                 dismissButton = {
                     Button(
                         onClick = {
+                            // Move active job to completed trips with actual earnings
+                            activeJob?.let { job ->
+                                val completedJob = job.copy(
+                                    status = TripStatus.COMPLETED,
+                                    actualEarnings = job.estimatedEarnings
+                                )
+                                // In a real app, you would save this to a database
+                                // For now, we'll just clear the active job
+                            }
                             isOnline = false
                             activeJob = null
                             showJobCompletionDialog = false
@@ -2092,7 +2597,7 @@ fun HomeScreen(
 @Composable
 fun TransportRequestOverlay(
     request: TransportRequest,
-    onAccept: () -> Unit,
+    onAccept: (Double) -> Unit,
     onReject: () -> Unit,
     onTimeout: () -> Unit,
     modifier: Modifier = Modifier
@@ -2103,6 +2608,8 @@ fun TransportRequestOverlay(
     var negotiatedPrice by remember { mutableStateOf("") }
     var isNegotiating by remember { mutableStateOf(false) }
     var negotiationTimeRemaining by remember { mutableStateOf(30) }
+    var negotiationResult by remember { mutableStateOf<NegotiationResult?>(null) }
+    var finalPrice by remember { mutableStateOf(request.estimatedEarnings) }
 
     // Countdown timer
     LaunchedEffect(Unit) {
@@ -2124,14 +2631,23 @@ fun TransportRequestOverlay(
             // Automatic acceptance/rejection logic
             val originalPrice = request.estimatedEarnings ?: 75.0
             val negotiatedPriceValue = negotiatedPrice.replace("$", "").toDoubleOrNull() ?: originalPrice
-            val isAccepted = negotiatedPriceValue <= originalPrice * 1.2
+            
+            // Customer accepts if the negotiated price is reasonable (within 20% of original)
+            val isAccepted = negotiatedPriceValue <= originalPrice * 1.2 && negotiatedPriceValue >= originalPrice * 0.8
+            
             if (isAccepted) {
+                finalPrice = negotiatedPriceValue
+                negotiationResult = NegotiationResult.ACCEPTED
                 isNegotiating = false
                 showNegotiateDialog = false
-                onAccept()
+                // Accept with the negotiated price
+                onAccept(negotiatedPriceValue)
             } else {
+                negotiationResult = NegotiationResult.REJECTED
                 isNegotiating = false
                 showNegotiateDialog = false
+                // Reject the request
+                onReject()
             }
         }
     }
@@ -2144,7 +2660,7 @@ fun TransportRequestOverlay(
                 .then(modifier),
             elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface
+                containerColor = Color(0xFFFFF8DC) // Ivory background
             ),
             shape = MaterialTheme.shapes.large
         ) {
@@ -2155,225 +2671,271 @@ fun TransportRequestOverlay(
                     .padding(horizontal = 20.dp, vertical = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Header with countdown
-                Column(
+                // Banner for Tow Request title
+                Card(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFDAA520) // Mustard banner
+                    ),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
                 ) {
-                    Text(
-                        text = if (isNegotiating) "Negotiation" else "Tow Request",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = if (isNegotiating) "${negotiationTimeRemaining}s" else "${timeRemaining}s",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if ((isNegotiating && negotiationTimeRemaining <= 10) || (!isNegotiating && timeRemaining <= 10)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(20.dp))
-
-                if (isNegotiating) {
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Your Offer: $${negotiatedPrice}",
+                            text = if (isNegotiating) "Negotiation" else "Tow Request",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                            color = Color.White, // White text on mustard background
+                            textAlign = TextAlign.Center
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Waiting for customer response...",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = if (isNegotiating) "${negotiationTimeRemaining}s" else "${timeRemaining}s",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = if ((isNegotiating && negotiationTimeRemaining <= 10) || (!isNegotiating && timeRemaining <= 10)) Color.Red else Color.White // Red for urgent, white for normal
                         )
                     }
-                } else {
-                    // Info rows styled like main screen
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface
-                        ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            // Dropoff Location
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Place,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = "Dropoff Location",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        text = request.dropoffAddress,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                    )
-                                }
-                            }
-                            // Vehicle Type
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Person,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = "Vehicle Type",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        text = request.vehicleType,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                    )
-                                }
-                            }
-                            // Problem
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Warning,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = "Problem",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                    Text(
-                                        text = request.specialNotes,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                                    )
-                                }
-                            }
-                            // Offer Amount
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Star,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = "Offer",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Text(
-                                        text = "$${String.format("%.0f", request.estimatedEarnings ?: 75.0)}",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
-                                    )
-                                }
-                            }
-                        }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                    // Map snippet in a card
+                if (isNegotiating) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface
+                            containerColor = Color(0xFFF5F5F5) // White smoke background
                         ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
                     ) {
                         Column(
-                            modifier = Modifier.padding(16.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "Vehicle's Current Location",
-                                style = MaterialTheme.typography.labelMedium,
+                                text = "Your Offer: $${negotiatedPrice}",
+                                style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
-                                modifier = Modifier.padding(bottom = 8.dp)
+                                color = Color(0xFF000000) // Black text
                             )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(150.dp)
-                                    .background(
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                                    )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Waiting for customer response...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF000000) // Black text
+                            )
+                        }
+                    }
+                } else if (negotiationResult != null) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFFF5F5F5) // White smoke background
+                        ),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = if (negotiationResult == NegotiationResult.ACCEPTED) Icons.Default.Check else Icons.Default.Close,
+                                contentDescription = "Negotiation Result",
+                                tint = if (negotiationResult == NegotiationResult.ACCEPTED) Color(0xFF006400) else Color.Red, // Dark green
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (negotiationResult == NegotiationResult.ACCEPTED) "Offer Accepted!" else "Offer Rejected",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = if (negotiationResult == NegotiationResult.ACCEPTED) Color(0xFF006400) else Color.Red // Dark green
+                            )
+                            if (negotiationResult == NegotiationResult.ACCEPTED) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Final Price: $${String.format("%.0f", finalPrice)}",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF000000) // Black text
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Info blocks with proper geometry
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFFF5F5F5) // White smoke background
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // Dropoff Location Block
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xFFFFF8DC) // Ivory block
+                                ),
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
                             ) {
-                                val userLocation by AppLocationManager.location.collectAsState(initial = null)
-                                GoogleMap(
-                                    modifier = Modifier.fillMaxSize(),
-                                    cameraPositionState = rememberCameraPositionState {
-                                        position = CameraPosition.fromLatLngZoom(
-                                            request.pickupLatLng,
-                                            15f
-                                        )
-                                    },
-                                    properties = MapProperties(
-                                        mapType = MapType.NORMAL,
-                                        isMyLocationEnabled = false
-                                    )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Marker(
-                                        state = MarkerState(position = request.pickupLatLng),
-                                        title = "Customer Location",
-                                        snippet = request.pickupAddress,
-                                        icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)
+                                    Icon(
+                                        imageVector = Icons.Default.Place,
+                                        contentDescription = null,
+                                        tint = Color(0xFFDAA520), // Mustard icon
+                                        modifier = Modifier.size(20.dp)
                                     )
-                                    userLocation?.let { driverLocation ->
-                                        Marker(
-                                            state = MarkerState(position = driverLocation),
-                                            title = "Your Location",
-                                            snippet = "Driver",
-                                            icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = "Dropoff Location",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF000000) // Black text
                                         )
-                                        Polyline(
-                                            points = listOf(driverLocation, request.pickupLatLng),
-                                            color = MaterialTheme.colorScheme.primary,
-                                            width = 8f
+                                        Text(
+                                            text = request.dropoffAddress,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color(0xFF000000) // Black text
                                         )
+                                    }
+                                }
+                            }
+                            
+                            // Vehicle Type Block
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xFFFFF8DC) // Ivory block
+                                ),
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Person,
+                                        contentDescription = null,
+                                        tint = Color(0xFFDAA520), // Mustard icon
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = "Vehicle Type",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF000000) // Black text
+                                        )
+                                        Text(
+                                            text = request.vehicleType,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color(0xFF000000) // Black text
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            // Problem Block
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xFFFFF8DC) // Ivory block
+                                ),
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Warning,
+                                        contentDescription = null,
+                                        tint = Color.Red, // Red icon for problem
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = "Problem",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.Red // Red text for problem
+                                        )
+                                        Text(
+                                            text = request.specialNotes,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = Color(0xFF000000) // Black text
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            // Offer Amount Block
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xFFFFF8DC) // Ivory block
+                                ),
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Star,
+                                        contentDescription = null,
+                                        tint = Color(0xFFDAA520), // Mustard icon
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = if (negotiationResult == NegotiationResult.ACCEPTED) "Final Price" else "Offer",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF000000) // Black text
+                                        )
+                                        Text(
+                                            text = "$${String.format("%.0f", finalPrice)}",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (negotiationResult == NegotiationResult.ACCEPTED) Color(0xFF006400) else Color(0xFFDAA520) // Dark green if accepted, mustard if not
+                                        )
+                                        if (negotiationResult == NegotiationResult.ACCEPTED) {
+                                            Text(
+                                                text = "Negotiated from $${String.format("%.0f", request.estimatedEarnings ?: 75.0)}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFF000000) // Black text
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -2381,61 +2943,132 @@ fun TransportRequestOverlay(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Map snippet in a card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFFF5F5F5) // White smoke background
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Text(
+                            text = "Vehicle's Current Location",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF000000), // Black text
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(120.dp)
+                                .background(
+                                    color = Color(0xFFF5F5F5), // White smoke background
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                )
+                        ) {
+                            val userLocation by AppLocationManager.location.collectAsState(initial = null)
+                            GoogleMap(
+                                modifier = Modifier.fillMaxSize(),
+                                cameraPositionState = rememberCameraPositionState {
+                                    position = CameraPosition.fromLatLngZoom(
+                                        request.pickupLatLng,
+                                        15f
+                                    )
+                                },
+                                properties = MapProperties(
+                                    mapType = MapType.NORMAL,
+                                    isMyLocationEnabled = false
+                                )
+                            ) {
+                                Marker(
+                                    state = MarkerState(position = request.pickupLatLng),
+                                    title = "Customer Location",
+                                    snippet = request.pickupAddress,
+                                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)
+                                )
+                                userLocation?.let { driverLocation ->
+                                    Marker(
+                                        state = MarkerState(position = driverLocation),
+                                        title = "Your Location",
+                                        snippet = "Driver",
+                                        icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE)
+                                    )
+                                    Polyline(
+                                        points = listOf(driverLocation, request.pickupLatLng),
+                                        color = Color(0xFFDAA520), // Mustard color
+                                        width = 8f
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
 
                 // Action Buttons
                 if (!isNegotiating) {
                 Row(
                     modifier = Modifier
                             .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
                         onClick = onReject,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
                                 containerColor = Color.Red
-                        )
+                        ),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = null,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Reject")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Reject", style = MaterialTheme.typography.bodySmall)
                     }
                     Button(
-                        onClick = onAccept,
+                        onClick = { onAccept(request.estimatedEarnings ?: 75.0) },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
                                 containerColor = Color(0xFF006400) // Dark green
-                        )
+                        ),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Check,
                             contentDescription = null,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Accept")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Accept", style = MaterialTheme.typography.bodySmall)
                     }
                 }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     OutlinedButton(
                         onClick = { showNegotiateDialog = true },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = Color(0xFFDAA520) // Goldenrod
-                        )
+                        ),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Edit,
                             contentDescription = null,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Negotiate Price")
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Negotiate Price", style = MaterialTheme.typography.bodySmall)
                     }
                 } else {
                     AnimatedVisibility(
@@ -2443,22 +3076,30 @@ fun TransportRequestOverlay(
                         enter = fadeIn(),
                         exit = fadeOut()
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFFF5F5F5) // White smoke background
+                            ),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(32.dp),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Waiting for customer response...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    color = Color(0xFFDAA520) // Mustard color
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Waiting for customer response...",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF000000) // Black text
+                                )
+                            }
                         }
                     }
                 }
@@ -2475,7 +3116,7 @@ fun TransportRequestOverlay(
                     text = "Negotiate Price",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = Color(0xFF000000) // Black text
                 )
             },
             text = {
@@ -2483,9 +3124,42 @@ fun TransportRequestOverlay(
                     Text(
                         text = "Enter your price offer:",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = Color(0xFF000000), // Black text
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
+                    
+                    // Price guidance
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFFF5F5F5) // White smoke background
+                        ),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Text(
+                                text = "Price Guidelines",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF000000) // Black text
+                            )
+                            Text(
+                                text = "Original: $${String.format("%.0f", request.estimatedEarnings ?: 75.0)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF000000) // Black text
+                            )
+                            Text(
+                                text = "Acceptable range: $${String.format("%.0f", (request.estimatedEarnings ?: 75.0) * 0.8)} - $${String.format("%.0f", (request.estimatedEarnings ?: 75.0) * 1.2)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF000000) // Black text
+                            )
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
                     OutlinedTextField(
                         value = negotiatedPrice,
                         onValueChange = { negotiatedPrice = it },
@@ -2493,10 +3167,37 @@ fun TransportRequestOverlay(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                            focusedBorderColor = Color(0xFFDAA520), // Mustard
+                            unfocusedBorderColor = Color(0xFFDAA520), // Mustard
+                            focusedLabelColor = Color(0xFF000000), // Black
+                            unfocusedLabelColor = Color(0xFF000000) // Black
                         )
                     )
+                    
+                    // Price validation
+                    if (negotiatedPrice.isNotEmpty()) {
+                        val originalPrice = request.estimatedEarnings ?: 75.0
+                        val negotiatedPriceValue = negotiatedPrice.replace("$", "").toDoubleOrNull() ?: 0.0
+                        val isValid = negotiatedPriceValue >= originalPrice * 0.8 && negotiatedPriceValue <= originalPrice * 1.2
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isValid) Icons.Default.Check else Icons.Default.Warning,
+                                contentDescription = "Price Validation",
+                                tint = if (isValid) Color(0xFF006400) else Color(0xFFFFA500), // Dark green
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isValid) "Price is reasonable" else "Price may be rejected",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isValid) Color(0xFF006400) else Color(0xFFFFA500) // Dark green
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -2510,7 +3211,8 @@ fun TransportRequestOverlay(
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color(0xFFDAA520) // Goldenrod
-                    )
+                    ),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
                 ) {
                     Text("Send Offer")
                 }
@@ -2519,7 +3221,7 @@ fun TransportRequestOverlay(
                 TextButton(
                     onClick = { showNegotiateDialog = false }
                 ) {
-                    Text("Cancel")
+                    Text("Cancel", color = Color(0xFF000000)) // Black text
                 }
             }
         )
@@ -3377,6 +4079,7 @@ fun QuickActionButton(
 @Composable
 fun EarningsSummaryCard(
     earningsData: EarningsData,
+    activeJob: TripData? = null,
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(false) }
@@ -3409,22 +4112,34 @@ fun EarningsSummaryCard(
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Earnings Summary",
+                                    Text(
+                        text = "Earnings Summary",
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF000000) // Black text for better visibility
                     )
                 }
                 
                 Row(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
+                    Column(horizontalAlignment = Alignment.End) {
+                                            Text(
                         text = "$${String.format("%.0f", earningsData.daily)}",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.primary
+                        color = Color(0xFF000000) // Black text for better visibility
                     )
+                        // Show active job indicator
+                        if (activeJob != null && activeJob.status == TripStatus.ACTIVE) {
+                            Text(
+                                text = "Active: $${String.format("%.0f", activeJob.estimatedEarnings)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF006400), // Dark green
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.width(8.dp))
                 Icon(
                         imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
@@ -3529,11 +4244,12 @@ fun TripsSection(
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-            Text(
+                        Text(
                 text = "Trips",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Medium
-                    )
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF000000) // Black text for better visibility
+            )
                 }
                 
                 Row(
@@ -3555,10 +4271,7 @@ fun TripsSection(
                     Text(
                         text = "${trips.filter { it.status == selectedTab.status }.size} ${selectedTab.title.lowercase()}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (hasActiveTrips && selectedTab == TripTab.ACTIVE) 
-                            MaterialTheme.colorScheme.primary 
-                        else 
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                        color = Color(0xFF000000) // Black text for better visibility
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Icon(
@@ -3615,11 +4328,11 @@ fun TripsSection(
                             .height(80.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "No ${selectedTab.title.lowercase()} trips",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                                            Text(
+                            text = "No ${selectedTab.title.lowercase()} trips",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF000000) // Black text for better visibility
+                        )
                     }
                 }
             }
@@ -3737,11 +4450,11 @@ fun TripCard(
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (trip.status == TripStatus.ACTIVE) "Started: ${trip.departureTime}" else "Departure: ${trip.departureTime}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                                        Text(
+                            text = if (trip.status == TripStatus.ACTIVE) "Started: ${trip.departureTime}" else "Departure: ${trip.departureTime}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF000000) // Black text for better visibility
+                        )
             }
             
             Spacer(modifier = Modifier.height(4.dp))
@@ -3759,11 +4472,11 @@ fun TripCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "ETA: ${trip.estimatedArrival}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                                            Text(
+                            text = "ETA: ${trip.estimatedArrival}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF000000) // Black text for better visibility
+                        )
                 }
                 Spacer(modifier = Modifier.height(4.dp))
             }
@@ -3780,11 +4493,11 @@ fun TripCard(
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = trip.truckInfo,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                                        Text(
+                            text = trip.truckInfo,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF000000) // Black text for better visibility
+                        )
             }
             
             Spacer(modifier = Modifier.height(8.dp))
@@ -3795,11 +4508,22 @@ fun TripCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = if (trip.status == TripStatus.COMPLETED) "Paid:" else "Estimated:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Column {
+                                            Text(
+                            text = if (trip.status == TripStatus.COMPLETED) "Paid:" else "Estimated:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF000000) // Black text for better visibility
+                        )
+                    // Show negotiated indicator for active trips
+                    if (trip.status == TripStatus.ACTIVE && trip.estimatedEarnings != 85.0) {
+                        Text(
+                            text = "Negotiated Price",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF006400), // Dark green
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
                 Text(
                     text = "$${String.format("%.0f", trip.actualEarnings ?: trip.estimatedEarnings)}",
                     style = MaterialTheme.typography.titleMedium,
@@ -3892,10 +4616,11 @@ fun PaymentMethodsCard(
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                Text(
+                                Text(
                     text = "Payment Methods",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Medium
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF000000) // Black text for better visibility
                 )
                 }
                 
@@ -4053,7 +4778,8 @@ fun OnlineStatusSection(
     isOnline: Boolean,
     onOnlineChange: (Boolean) -> Unit,
     selectedStatus: DriverStatus,
-    onStatusChange: (DriverStatus) -> Unit
+    onStatusChange: (DriverStatus) -> Unit,
+    canGoOnline: Boolean
 ) {
     var isExpanded by remember { mutableStateOf(false) }
     
@@ -4098,7 +4824,7 @@ fun OnlineStatusSection(
                     Text(
                         text = if (isOnline) "Online" else "Offline",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (isOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = Color(0xFF000000) // Black text for better visibility
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Icon(
@@ -4108,11 +4834,79 @@ fun OnlineStatusSection(
                         modifier = Modifier.size(16.dp)
                     )
                 }
+                
+                // Connectivity status indicator
+                if (!canGoOnline) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "Connectivity Issue",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Check Requirements",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF000000) // Black text for better visibility
+                        )
+                    }
+                }
             }
             
             // Expanded content
             if (isExpanded) {
                 Spacer(modifier = Modifier.height(12.dp))
+                
+                // Connectivity Status Message
+                if (!canGoOnline) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Connectivity Issue",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Cannot Go Online",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF000000) // Black text for better visibility
+                                )
+                                Text(
+                                    text = "Internet and location services required",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF000000) // Black text for better visibility
+                                )
+                            }
+                            TextButton(
+                                onClick = { onOnlineChange(true) }
+                            ) {
+                                Text(
+                                    text = "Check",
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
                 
                 // Online/Offline Toggle
                 Row(
@@ -4125,20 +4919,23 @@ fun OnlineStatusSection(
                             text = if (isOnline) "Online" else "Offline",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
-                            color = if (isOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color(0xFF000000) // Black text for better visibility
                         )
                         Text(
                             text = if (isOnline) "Receiving requests" else "Not available",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color(0xFF000000) // Black text for better visibility
                         )
                     }
                     Switch(
                         checked = isOnline,
                         onCheckedChange = onOnlineChange,
+                        enabled = canGoOnline || !isOnline, // Disable when online but no connectivity
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = MaterialTheme.colorScheme.primary,
-                            checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                            checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                            disabledCheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            disabledCheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
                     )
                 }
@@ -4151,6 +4948,7 @@ fun OnlineStatusSection(
                         text = "Availability",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Medium,
+                        color = Color(0xFF000000), // Black text for better visibility
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
                     
@@ -4204,10 +5002,15 @@ enum class DriverStatus(val displayName: String) {
     BUSY("On Another Job (Visible but Busy)")
 }
 
+enum class NegotiationResult {
+    ACCEPTED, REJECTED
+}
+
 @Composable
 fun LiveRouteMap(
     driverLocation: LatLng,
     customerLocation: LatLng,
+    negotiatedPrice: Double? = null,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -4261,14 +5064,14 @@ fun LiveRouteMap(
                 .align(Alignment.TopEnd)
                 .padding(16.dp)
                 .background(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                    color = Color(0xFFF5F5F5), // White smoke background
                     shape = androidx.compose.foundation.shape.CircleShape
                 )
         ) {
             Icon(
                 imageVector = Icons.Default.Close,
                 contentDescription = "Close",
-                tint = MaterialTheme.colorScheme.onSurface
+                tint = Color(0xFF000000) // Black icon for better visibility
             )
         }
         
@@ -4278,7 +5081,11 @@ fun LiveRouteMap(
                 .align(Alignment.BottomCenter)
                 .padding(16.dp)
                 .fillMaxWidth(),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFFF5F5F5) // White smoke background
+            ),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)
         ) {
             Column(
                 modifier = Modifier
@@ -4288,7 +5095,8 @@ fun LiveRouteMap(
                 Text(
                     text = "🚗 Live Route to Customer",
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF000000) // Black text for better visibility
                 )
                 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -4301,12 +5109,13 @@ fun LiveRouteMap(
                         Text(
                             text = "Distance",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color(0xFF000000) // Black text for better visibility
                         )
                         Text(
                             text = "1.8 miles",
                             style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF000000) // Black text for better visibility
                         )
                     }
                     
@@ -4314,12 +5123,13 @@ fun LiveRouteMap(
                         Text(
                             text = "Est. Time",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color(0xFF000000) // Black text for better visibility
                         )
                         Text(
                             text = "5 min",
                             style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF000000) // Black text for better visibility
                         )
                     }
                     
@@ -4327,14 +5137,23 @@ fun LiveRouteMap(
                         Text(
                             text = "Earnings",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color(0xFF000000) // Black text for better visibility
                         )
                         Text(
-                            text = "$85",
+                            text = "$${String.format("%.0f", negotiatedPrice ?: 85.0)}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.primary
+                            color = if (negotiatedPrice != null && negotiatedPrice != 85.0) Color(0xFF006400) else MaterialTheme.colorScheme.primary // Dark green
                         )
+                        // Show negotiated indicator if price was negotiated
+                        if (negotiatedPrice != null && negotiatedPrice != 85.0) {
+                            Text(
+                                text = "Negotiated",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF006400), // Dark green
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
             }
@@ -4345,7 +5164,7 @@ fun LiveRouteMap(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.8f)),
+                    .background(Color(0xFFF5F5F5).copy(alpha = 0.9f)), // White smoke background
                 contentAlignment = Alignment.Center
             ) {
                 Column(
@@ -4358,7 +5177,7 @@ fun LiveRouteMap(
                     Text(
                         text = "Loading map...",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = Color(0xFF000000) // Black text for better visibility
                     )
                 }
             }
