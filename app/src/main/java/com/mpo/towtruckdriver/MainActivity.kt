@@ -23,6 +23,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -85,6 +86,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -168,67 +170,11 @@ fun isLocationEnabled(context: Context): Boolean {
            locationManager.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
 }
 
-// Sound and vibration manager for tow requests
-class TowRequestNotifier(private val context: Context) {
-    private var ringtone: android.media.Ringtone? = null
-    private var vibrator: Vibrator? = null
-    
-    init {
-        try {
-            // Get default notification ringtone
-            val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-            ringtone = RingtoneManager.getRingtone(context, notification)
-            
-            // Get vibrator service
-            vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as Vibrator
-            } else {
-                @Suppress("DEPRECATION")
-                context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            }
-        } catch (e: Exception) {
-            println("Error initializing sound/vibration: ${e.message}")
-        }
-    }
-    
-    fun playTowRequestAlert() {
-        try {
-            // Play ringtone
-            ringtone?.let { rt ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    val audioAttributes = AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                    rt.audioAttributes = audioAttributes
-                }
-                rt.play()
-            }
-            
-            // Vibrate device
-            vibrator?.let { vib ->
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val vibrationEffect = VibrationEffect.createOneShot(
-                        1000, // Duration in milliseconds
-                        VibrationEffect.DEFAULT_AMPLITUDE
-                    )
-                    vib.vibrate(vibrationEffect)
-                } else {
-                    @Suppress("DEPRECATION")
-                    vib.vibrate(1000) // Duration in milliseconds
-                }
-            }
-        } catch (e: Exception) {
-            println("Error playing tow request alert: ${e.message}")
-        }
-    }
-    
-    fun stopAlert() {
-        try {
-            ringtone?.stop()
-        } catch (e: Exception) {
-            println("Error stopping alert: ${e.message}")
-        }
+fun shouldShowRequestPermissionRationale(context: Context, permission: String): Boolean {
+    return if (context is androidx.activity.ComponentActivity) {
+        context.shouldShowRequestPermissionRationale(permission)
+    } else {
+        false
     }
 }
 
@@ -261,15 +207,26 @@ class MainActivity : ComponentActivity() {
             permissions.getOrDefault(Manifest.permission.ACCESS_FINE_LOCATION, false) -> {
                 // Precise location access granted
                 startLocationUpdates()
+                requestBackgroundLocationPermission()
             }
             permissions.getOrDefault(Manifest.permission.ACCESS_COARSE_LOCATION, false) -> {
                 // Only approximate location access granted
                 startLocationUpdates()
+                requestBackgroundLocationPermission()
             }
             else -> {
-                // No location access granted
+                // No location access granted - check if permanently denied
+                if (!shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
+                    // Permission permanently denied, show settings dialog
+                    // This will be handled by the UI composable
+                }
             }
         }
+    }
+
+    private fun showPermissionSettingsDialog() {
+        // This will be handled in the UI composable
+        // We'll use a callback to show the settings dialog
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -288,11 +245,19 @@ class MainActivity : ComponentActivity() {
                     MainScreen(
                         modifier = Modifier.padding(innerPadding),
                         requestLocationPermission = { requestLocationPermission() },
+                        openLocationSettings = { openLocationSettings() },
                         sharedPreferences = sharedPreferences
                     )
                 }
             }
         }
+    }
+
+    private fun openLocationSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = android.net.Uri.fromParts("package", packageName, null)
+        }
+        startActivity(intent)
     }
 
     private fun setupNetworkMonitoring() {
@@ -345,6 +310,12 @@ class MainActivity : ComponentActivity() {
                 )
             }
             else -> {
+                // Check if permission was permanently denied
+                if (!shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
+                    // Permission permanently denied, show settings dialog
+                    // This will be handled by the UI composable
+                    return
+                }
                 locationPermissionRequest.launch(
                     arrayOf(
                         Manifest.permission.ACCESS_FINE_LOCATION,
@@ -518,6 +489,31 @@ fun MapScreenWithMenu(
     modifier: Modifier = Modifier
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    var showLocationPermissionDialog by remember { mutableStateOf(false) }
+    var showLocationSettingsDialog by remember { mutableStateOf(false) }
+    
+    val context = LocalContext.current
+    
+    // Check location permission and monitor changes
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000) // Check every second
+            val hasPermission = hasLocationPermission(context)
+            
+            // If permission was granted, hide all dialogs
+            if (hasPermission) {
+                showLocationPermissionDialog = false
+                showLocationSettingsDialog = false
+            } else if (!hasPermission && !showLocationPermissionDialog && !showLocationSettingsDialog) {
+                // Permission was revoked, show appropriate dialog
+                if (!shouldShowRequestPermissionRationale(context, Manifest.permission.ACCESS_FINE_LOCATION)) {
+                    showLocationSettingsDialog = true
+                } else {
+                    showLocationPermissionDialog = true
+                }
+            }
+        }
+    }
     Box(modifier = modifier.fillMaxSize()) {
         MapScreen(modifier = Modifier.fillMaxSize())
         // Top app bar with menu icon
@@ -581,6 +577,37 @@ fun MapScreenWithMenu(
                     }
                 }
             }
+        }
+        
+        // Permission dialogs
+        if (showLocationPermissionDialog) {
+            LocationPermissionDialog(
+                onDismiss = { showLocationPermissionDialog = false },
+                onRequestPermission = {
+                    showLocationPermissionDialog = false
+                    // This will be handled by the MainActivity
+                },
+                onOpenSettings = {
+                    showLocationPermissionDialog = false
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = android.net.Uri.fromParts("package", context.packageName, null)
+                    }
+                    context.startActivity(intent)
+                }
+            )
+        }
+        
+        if (showLocationSettingsDialog) {
+            LocationPermissionSettingsDialog(
+                onDismiss = { showLocationSettingsDialog = false },
+                onOpenSettings = {
+                    showLocationSettingsDialog = false
+                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = android.net.Uri.fromParts("package", context.packageName, null)
+                    }
+                    context.startActivity(intent)
+                }
+            )
         }
     }
 }
@@ -683,13 +710,30 @@ fun MapScreen(
         mapProperties = mapProperties.copy(isMyLocationEnabled = hasLocationPermission)
     }
     
-    // Periodic check for connectivity status
+    // Periodic check for connectivity status and permission changes
     LaunchedEffect(Unit) {
         while (true) {
-            hasLocationPermission = hasLocationPermission(context)
-            isLocationEnabled = isLocationEnabled(context)
-            hasInternetAccess = hasInternetAccess(context)
-            delay(2000) // Check every 2 seconds
+            val currentPermission = hasLocationPermission(context)
+            val currentLocationEnabled = isLocationEnabled(context)
+            val currentInternetAccess = hasInternetAccess(context)
+            
+            // Update states only if they changed
+            if (currentPermission != hasLocationPermission) {
+                hasLocationPermission = currentPermission
+                println("📍 Location permission changed: $hasLocationPermission")
+            }
+            
+            if (currentLocationEnabled != isLocationEnabled) {
+                isLocationEnabled = currentLocationEnabled
+                println("📍 Location services changed: $isLocationEnabled")
+            }
+            
+            if (currentInternetAccess != hasInternetAccess) {
+                hasInternetAccess = currentInternetAccess
+                println("🌐 Internet access changed: $hasInternetAccess")
+            }
+            
+            delay(1000) // Check every second for more responsive updates
         }
     }
 
@@ -884,6 +928,25 @@ fun WelcomeScreen(
         delay(3000)
         showWelcomeNote = false
     }
+    
+    // Monitor location permission changes
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000) // Check every second
+            val currentPermission = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            
+            if (currentPermission != hasLocationPermission) {
+                hasLocationPermission = currentPermission
+                if (currentPermission) {
+                    // Permission was granted, trigger callback
+                    onLocationPermissionGranted()
+                }
+            }
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         // Full screen map
@@ -1051,17 +1114,23 @@ fun WelcomeScreen(
 
 @Composable
 fun SignUpScreen(
-    onSignUpClick: (String, String, String) -> Unit,
+    onSignUpClick: (String, String, String, String, String, String) -> Unit,
     onBackToSignIn: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
+    var phoneNumber by remember { mutableStateOf("") }
+    var companyName by remember { mutableStateOf("") }
+    var tradeLicense by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var nameError by remember { mutableStateOf<String?>(null) }
     var emailError by remember { mutableStateOf<String?>(null) }
+    var phoneError by remember { mutableStateOf<String?>(null) }
+    var companyError by remember { mutableStateOf<String?>(null) }
+    var licenseError by remember { mutableStateOf<String?>(null) }
     var passwordError by remember { mutableStateOf<String?>(null) }
     var confirmPasswordError by remember { mutableStateOf<String?>(null) }
     var shouldAttemptSignUp by remember { mutableStateOf(false) }
@@ -1070,7 +1139,7 @@ fun SignUpScreen(
         if (shouldAttemptSignUp) {
             isLoading = true
             delay(1500) // Simulate network delay
-            onSignUpClick(name, email, password)
+            onSignUpClick(name, email, phoneNumber, companyName, tradeLicense, password)
             isLoading = false
             shouldAttemptSignUp = false
         }
@@ -1078,8 +1147,10 @@ fun SignUpScreen(
 
     Column(
         modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp),
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp)
+            .imePadding(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -1126,6 +1197,55 @@ fun SignUpScreen(
             supportingText = {
                 if (emailError != null) {
                     Text(emailError!!)
+                }
+            }
+        )
+
+        OutlinedTextField(
+            value = phoneNumber,
+            onValueChange = { 
+                phoneNumber = it
+                phoneError = null
+            },
+            label = { Text("Phone Number") },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            isError = phoneError != null,
+            supportingText = {
+                if (phoneError != null) {
+                    Text(phoneError!!)
+                }
+            }
+        )
+
+        OutlinedTextField(
+            value = companyName,
+            onValueChange = { 
+                companyName = it
+                companyError = null
+            },
+            label = { Text("Company Name") },
+            modifier = Modifier.fillMaxWidth(),
+            isError = companyError != null,
+            supportingText = {
+                if (companyError != null) {
+                    Text(companyError!!)
+                }
+            }
+        )
+
+        OutlinedTextField(
+            value = tradeLicense,
+            onValueChange = { 
+                tradeLicense = it
+                licenseError = null
+            },
+            label = { Text("Trade License Number") },
+            modifier = Modifier.fillMaxWidth(),
+            isError = licenseError != null,
+            supportingText = {
+                if (licenseError != null) {
+                    Text(licenseError!!)
                 }
             }
         )
@@ -1188,6 +1308,24 @@ fun SignUpScreen(
                     hasError = true
                 }
                 
+                if (phoneNumber.isEmpty()) {
+                    phoneError = "Phone number is required"
+                    hasError = true
+                } else if (phoneNumber.length < 8) {
+                    phoneError = "Please enter a valid phone number"
+                    hasError = true
+                }
+                
+                if (companyName.isEmpty()) {
+                    companyError = "Company name is required"
+                    hasError = true
+                }
+                
+                if (tradeLicense.isEmpty()) {
+                    licenseError = "Trade license number is required"
+                    hasError = true
+                }
+                
                 if (password.isEmpty()) {
                     passwordError = "Password cannot be empty"
                     hasError = true
@@ -1223,6 +1361,9 @@ fun SignUpScreen(
         TextButton(onClick = onBackToSignIn) {
             Text("Already have an account? Sign In")
         }
+        
+        // Add bottom padding to ensure last element is visible
+        Spacer(modifier = Modifier.height(32.dp))
     }
 }
 
@@ -1241,7 +1382,9 @@ fun SignInScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp)
+            .imePadding(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -1328,6 +1471,9 @@ fun SignInScreen(
         ) {
             Text("Don't have an account? Sign Up")
         }
+        
+        // Add bottom padding to ensure last element is visible
+        Spacer(modifier = Modifier.height(32.dp))
     }
 }
 
@@ -1335,11 +1481,51 @@ fun SignInScreen(
 fun MainScreen(
     modifier: Modifier = Modifier,
     requestLocationPermission: () -> Unit,
+    openLocationSettings: () -> Unit,
     sharedPreferences: SharedPreferences
 ) {
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Loading) }
     var userName by remember { mutableStateOf("") }
     var userEmail by remember { mutableStateOf("") }
+    
+    // Permission dialog states
+    var showLocationPermissionDialog by remember { mutableStateOf(false) }
+    var showLocationSettingsDialog by remember { mutableStateOf(false) }
+    
+    val context = LocalContext.current
+    
+    // Check location permission on startup and monitor changes
+    LaunchedEffect(Unit) {
+        if (!hasLocationPermission(context)) {
+            // Check if permission was permanently denied
+            if (!shouldShowRequestPermissionRationale(context, Manifest.permission.ACCESS_FINE_LOCATION)) {
+                showLocationSettingsDialog = true
+            } else {
+                showLocationPermissionDialog = true
+            }
+        }
+    }
+    
+    // Monitor permission changes
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000) // Check every second
+            val hasPermission = hasLocationPermission(context)
+            
+            // If permission was granted, hide all dialogs
+            if (hasPermission) {
+                showLocationPermissionDialog = false
+                showLocationSettingsDialog = false
+            } else if (!hasPermission && !showLocationPermissionDialog && !showLocationSettingsDialog) {
+                // Permission was revoked, show appropriate dialog
+                if (!shouldShowRequestPermissionRationale(context, Manifest.permission.ACCESS_FINE_LOCATION)) {
+                    showLocationSettingsDialog = true
+                } else {
+                    showLocationPermissionDialog = true
+                }
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         // Check if user is already logged in
@@ -1356,6 +1542,31 @@ fun MainScreen(
             // Show sign in screen
             currentScreen = Screen.SignIn
         }
+    }
+
+    // Permission dialogs
+    if (showLocationPermissionDialog) {
+        LocationPermissionDialog(
+            onDismiss = { showLocationPermissionDialog = false },
+            onRequestPermission = {
+                showLocationPermissionDialog = false
+                requestLocationPermission()
+            },
+            onOpenSettings = {
+                showLocationPermissionDialog = false
+                openLocationSettings()
+            }
+        )
+    }
+    
+    if (showLocationSettingsDialog) {
+        LocationPermissionSettingsDialog(
+            onDismiss = { showLocationSettingsDialog = false },
+            onOpenSettings = {
+                showLocationSettingsDialog = false
+                openLocationSettings()
+            }
+        )
     }
 
     when (currentScreen) {
@@ -1388,11 +1599,14 @@ fun MainScreen(
         }
         Screen.SignUp -> {
             SignUpScreen(
-                onSignUpClick = { name, email, password ->
+                onSignUpClick = { name, email, phoneNumber, companyName, tradeLicense, password ->
                     sharedPreferences.edit().apply {
                         putString("user_email", email)
                         putString("user_password", password)
                         putString("user_name", name)
+                        putString("user_phone", phoneNumber)
+                        putString("user_company", companyName)
+                        putString("user_license", tradeLicense)
                         apply()
                     }
                     userName = name
@@ -1488,9 +1702,105 @@ fun MainScreenPreview() {
 
         MainScreen(
             requestLocationPermission = {},
+            openLocationSettings = {},
             sharedPreferences = mockSharedPreferences
         )
     }
+}
+
+@Composable
+fun LocationPermissionDialog(
+    onDismiss: () -> Unit,
+    onRequestPermission: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Location Permission Required",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "This app requires location access to function properly. Location is needed to:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                
+                Text(
+                    text = "• Show your current location on the map\n• Receive nearby tow requests\n• Track your route and provide accurate service\n• Enable real-time location sharing with customers",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                
+                Text(
+                    text = "Without location access, the app's core features will not work.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onRequestPermission
+            ) {
+                Text("Grant Permission")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun LocationPermissionSettingsDialog(
+    onDismiss: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Permission Required",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = "Location permission has been permanently denied. To use this app, you need to enable location permissions in your device settings.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                
+                Text(
+                    text = "Please go to Settings > Apps > TowTruck Driver > Permissions and enable Location access.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onOpenSettings
+            ) {
+                Text("Open Settings")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable
@@ -1726,6 +2036,37 @@ fun ConnectivityStatusIndicator(
 
 @Composable
 fun ProfileScreen(
+    userName: String,
+    userEmail: String,
+    onBack: () -> Unit,
+    onEditProfile: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var showEditProfile by remember { mutableStateOf(false) }
+    
+    if (showEditProfile) {
+        EditProfileScreen(
+            userName = userName,
+            userEmail = userEmail,
+            onBack = { showEditProfile = false },
+            onSave = { updatedData ->
+                // TODO: Save updated data to SharedPreferences or database
+                showEditProfile = false
+            },
+            modifier = modifier
+        )
+    } else {
+        ProfileContent(
+            userName = userName,
+            userEmail = userEmail,
+            onBack = onBack,
+            onEditProfile = { showEditProfile = true },
+            modifier = modifier
+        )
+    }
+}
+@Composable
+fun ProfileContent(
     userName: String,
     userEmail: String,
     onBack: () -> Unit,
@@ -2196,13 +2537,30 @@ fun HomeScreen(
         }
     }
     
-    // Periodic check for connectivity status
+    // Periodic check for connectivity status and permission changes
     LaunchedEffect(Unit) {
         while (true) {
-            hasLocationPermission = hasLocationPermission(context)
-            isLocationEnabled = isLocationEnabled(context)
-            hasInternetAccess = hasInternetAccess(context)
-            delay(2000) // Check every 2 seconds
+            val currentPermission = hasLocationPermission(context)
+            val currentLocationEnabled = isLocationEnabled(context)
+            val currentInternetAccess = hasInternetAccess(context)
+            
+            // Update states only if they changed
+            if (currentPermission != hasLocationPermission) {
+                hasLocationPermission = currentPermission
+                println("📍 Location permission changed: $hasLocationPermission")
+            }
+            
+            if (currentLocationEnabled != isLocationEnabled) {
+                isLocationEnabled = currentLocationEnabled
+                println("📍 Location services changed: $isLocationEnabled")
+            }
+            
+            if (currentInternetAccess != hasInternetAccess) {
+                hasInternetAccess = currentInternetAccess
+                println("🌐 Internet access changed: $hasInternetAccess")
+            }
+            
+            delay(1000) // Check every second for more responsive updates
         }
     }
     
@@ -2278,15 +2636,10 @@ fun HomeScreen(
         )
     }
 
-    // Sound notifier for tow requests
-    val towRequestNotifier = remember { TowRequestNotifier(context) }
-    
     // Simulate transport request after 3 seconds
     LaunchedEffect(Unit) {
         delay(3000)
         showTransportRequest = true
-        // Play sound and vibrate when tow request appears
-        towRequestNotifier.playTowRequestAlert()
     }
 
     Box(modifier = modifier.fillMaxSize()) {
@@ -2390,7 +2743,6 @@ fun HomeScreen(
                 request = transportRequest,
                 onAccept = { negotiatedPrice ->
                     showTransportRequest = false
-                    towRequestNotifier.stopAlert() // Stop the alert sound
                     selectedStatus = DriverStatus.BUSY
                     // Set activeJob with the negotiated price
                     activeJob = TripData(
@@ -2415,13 +2767,21 @@ fun HomeScreen(
                 },
                 onReject = {
                     showTransportRequest = false
-                    towRequestNotifier.stopAlert() // Stop the alert sound
-                    // TODO: Send rejection feedback
+                    // Reset driver status to available if they were busy
+                    if (selectedStatus == DriverStatus.BUSY) {
+                        selectedStatus = DriverStatus.AVAILABLE
+                    }
+                    // TODO: Send rejection feedback to server
+                    println("🚫 Tow request rejected by driver")
                 },
                 onTimeout = {
                     showTransportRequest = false
-                    towRequestNotifier.stopAlert() // Stop the alert sound
-                    // TODO: Auto-reject logic
+                    // Reset driver status to available if they were busy
+                    if (selectedStatus == DriverStatus.BUSY) {
+                        selectedStatus = DriverStatus.AVAILABLE
+                    }
+                    // TODO: Send timeout feedback to server
+                    println("⏰ Tow request timed out")
                 }
             )
         }
@@ -2630,7 +2990,7 @@ fun TransportRequestOverlay(
             
             // Automatic acceptance/rejection logic
             val originalPrice = request.estimatedEarnings ?: 75.0
-            val negotiatedPriceValue = negotiatedPrice.replace("$", "").toDoubleOrNull() ?: originalPrice
+            val negotiatedPriceValue = negotiatedPrice.replace("AED ", "").toDoubleOrNull() ?: originalPrice
             
             // Customer accepts if the negotiated price is reasonable (within 20% of original)
             val isAccepted = negotiatedPriceValue <= originalPrice * 1.2 && negotiatedPriceValue >= originalPrice * 0.8
@@ -2719,7 +3079,7 @@ fun TransportRequestOverlay(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "Your Offer: $${negotiatedPrice}",
+                                text = "Your Offer: AED ${negotiatedPrice}",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF000000) // Black text
@@ -2762,7 +3122,7 @@ fun TransportRequestOverlay(
                             if (negotiationResult == NegotiationResult.ACCEPTED) {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "Final Price: $${String.format("%.0f", finalPrice)}",
+                                    text = "Final Price: AED ${String.format("%.0f", finalPrice)}",
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF000000) // Black text
@@ -2924,14 +3284,14 @@ fun TransportRequestOverlay(
                                             color = Color(0xFF000000) // Black text
                                         )
                                         Text(
-                                            text = "$${String.format("%.0f", finalPrice)}",
+                                            text = "AED ${String.format("%.0f", finalPrice)}",
                                             style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.Bold,
                                             color = if (negotiationResult == NegotiationResult.ACCEPTED) Color(0xFF006400) else Color(0xFFDAA520) // Dark green if accepted, mustard if not
                                         )
                                         if (negotiationResult == NegotiationResult.ACCEPTED) {
                                             Text(
-                                                text = "Negotiated from $${String.format("%.0f", request.estimatedEarnings ?: 75.0)}",
+                                                text = "Negotiated from AED ${String.format("%.0f", request.estimatedEarnings ?: 75.0)}",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = Color(0xFF000000) // Black text
                                             )
@@ -3146,12 +3506,12 @@ fun TransportRequestOverlay(
                                 color = Color(0xFF000000) // Black text
                             )
                             Text(
-                                text = "Original: $${String.format("%.0f", request.estimatedEarnings ?: 75.0)}",
+                                text = "Original: AED ${String.format("%.0f", request.estimatedEarnings ?: 75.0)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF000000) // Black text
                             )
                             Text(
-                                text = "Acceptable range: $${String.format("%.0f", (request.estimatedEarnings ?: 75.0) * 0.8)} - $${String.format("%.0f", (request.estimatedEarnings ?: 75.0) * 1.2)}",
+                                text = "Acceptable range: AED ${String.format("%.0f", (request.estimatedEarnings ?: 75.0) * 0.8)} - AED ${String.format("%.0f", (request.estimatedEarnings ?: 75.0) * 1.2)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF000000) // Black text
                             )
@@ -3163,7 +3523,7 @@ fun TransportRequestOverlay(
                     OutlinedTextField(
                         value = negotiatedPrice,
                         onValueChange = { negotiatedPrice = it },
-                        label = { Text("Price (e.g., $90)") },
+                        label = { Text("Price (e.g., AED 90)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -3177,7 +3537,7 @@ fun TransportRequestOverlay(
                     // Price validation
                     if (negotiatedPrice.isNotEmpty()) {
                         val originalPrice = request.estimatedEarnings ?: 75.0
-                        val negotiatedPriceValue = negotiatedPrice.replace("$", "").toDoubleOrNull() ?: 0.0
+                        val negotiatedPriceValue = negotiatedPrice.replace("AED ", "").toDoubleOrNull() ?: 0.0
                         val isValid = negotiatedPriceValue >= originalPrice * 0.8 && negotiatedPriceValue <= originalPrice * 1.2
                         
                         Spacer(modifier = Modifier.height(8.dp))
@@ -3960,7 +4320,7 @@ fun QuickActionsSection(
     onNavigateToMap: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var isExpanded by remember { mutableStateOf(false) }
+    var isExpanded by remember { mutableStateOf(true) }
     
     Card(
         modifier = modifier.clickable { isExpanded = !isExpanded },
@@ -4082,7 +4442,7 @@ fun EarningsSummaryCard(
     activeJob: TripData? = null,
     modifier: Modifier = Modifier
 ) {
-    var isExpanded by remember { mutableStateOf(false) }
+    var isExpanded by remember { mutableStateOf(true) }
     
     Card(
         modifier = modifier.clickable { isExpanded = !isExpanded },
@@ -4125,7 +4485,7 @@ fun EarningsSummaryCard(
                 ) {
                     Column(horizontalAlignment = Alignment.End) {
                                             Text(
-                        text = "$${String.format("%.0f", earningsData.daily)}",
+                                                    text = "AED ${String.format("%.0f", earningsData.daily)}",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF000000) // Black text for better visibility
@@ -4133,7 +4493,7 @@ fun EarningsSummaryCard(
                         // Show active job indicator
                         if (activeJob != null && activeJob.status == TripStatus.ACTIVE) {
                             Text(
-                                text = "Active: $${String.format("%.0f", activeJob.estimatedEarnings)}",
+                                text = "Active: AED ${String.format("%.0f", activeJob.estimatedEarnings)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF006400), // Dark green
                                 fontWeight = FontWeight.Medium
@@ -4160,12 +4520,12 @@ fun EarningsSummaryCard(
             
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                EarningsItem("Today", earningsData.daily)
-                EarningsItem("This Week", earningsData.weekly)
-                EarningsItem("This Month", earningsData.monthly)
-                }
+                EarningsItem("Today", earningsData.daily, Modifier.weight(1f))
+                EarningsItem("This Week", earningsData.weekly, Modifier.weight(1f))
+                EarningsItem("This Month", earningsData.monthly, Modifier.weight(1f))
+            }
             }
         }
     }
@@ -4183,24 +4543,28 @@ fun EarningsItem(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer
         ),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
     ) {
         Column(
             modifier = Modifier
-                .padding(12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "$${String.format("%.0f", amount)}",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-        )
-        Text(
-            text = period,
-            style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-        )
+                .fillMaxWidth()
+                .padding(vertical = 8.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "AED ${String.format("%.0f", amount)}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = period,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
@@ -4525,7 +4889,7 @@ fun TripCard(
                     }
                 }
                 Text(
-                    text = "$${String.format("%.0f", trip.actualEarnings ?: trip.estimatedEarnings)}",
+                                            text = "AED ${String.format("%.0f", trip.actualEarnings ?: trip.estimatedEarnings)}",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -4781,7 +5145,7 @@ fun OnlineStatusSection(
     onStatusChange: (DriverStatus) -> Unit,
     canGoOnline: Boolean
 ) {
-    var isExpanded by remember { mutableStateOf(false) }
+    var isExpanded by remember { mutableStateOf(true) }
     
     Card(
         modifier = modifier.clickable { isExpanded = !isExpanded },
@@ -5140,7 +5504,7 @@ fun LiveRouteMap(
                             color = Color(0xFF000000) // Black text for better visibility
                         )
                         Text(
-                            text = "$${String.format("%.0f", negotiatedPrice ?: 85.0)}",
+                            text = "AED ${String.format("%.0f", negotiatedPrice ?: 85.0)}",
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
                             color = if (negotiatedPrice != null && negotiatedPrice != 85.0) Color(0xFF006400) else MaterialTheme.colorScheme.primary // Dark green
@@ -5182,5 +5546,250 @@ fun LiveRouteMap(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun EditProfileScreen(
+    userName: String,
+    userEmail: String,
+    onBack: () -> Unit,
+    onSave: (DriverProfileData) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var name by remember { mutableStateOf(userName) }
+    var email by remember { mutableStateOf(userEmail) }
+    var phone by remember { mutableStateOf("+1 (555) 123-4567") }
+    var fleetName by remember { mutableStateOf("ABC Trucking Co.") }
+    var driverId by remember { mutableStateOf("DRV-2024-001") }
+    var licenseNumber by remember { mutableStateOf("CDL-123456789") }
+    var licenseType by remember { mutableStateOf("CDL Class A") }
+    var licenseExpiry by remember { mutableStateOf("2024-12-15") }
+    var vehiclePlate by remember { mutableStateOf("ABC-1234") }
+    var vehicleMake by remember { mutableStateOf("Freightliner") }
+    var vehicleModel by remember { mutableStateOf("Cascadia 2022") }
+    var vehicleVin by remember { mutableStateOf("1FUJA6CV12L123456") }
+    var trailerPlate by remember { mutableStateOf("XYZ-5678") }
+    var trailerType by remember { mutableStateOf("Flatbed") }
+    var isLoading by remember { mutableStateOf(false) }
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .imePadding(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back"
+                )
+            }
+            Text(
+                text = "Edit Profile",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(
+                onClick = {
+                    isLoading = true
+                    // Simulate save operation
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                        kotlinx.coroutines.delay(1000)
+                        val updatedData = DriverProfileData(
+                            name = name,
+                            email = email,
+                            phone = phone,
+                            fleetName = fleetName,
+                            driverId = driverId,
+                            licenseNumber = licenseNumber,
+                            licenseType = licenseType,
+                            licenseExpiry = licenseExpiry,
+                            licenseImage = null,
+                            vehiclePlate = vehiclePlate,
+                            vehicleMake = vehicleMake,
+                            vehicleModel = vehicleModel,
+                            vehicleVin = vehicleVin,
+                            trailerPlate = trailerPlate,
+                            trailerType = trailerType
+                        )
+                        onSave(updatedData)
+                        isLoading = false
+                    }
+                },
+                enabled = !isLoading
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Text("Save")
+                }
+            }
+        }
+        // Personal Information Section
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Personal Information",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Full Name") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("Email") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = phone,
+                    onValueChange = { phone = it },
+                    label = { Text("Phone Number") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = fleetName,
+                    onValueChange = { fleetName = it },
+                    label = { Text("Company/Fleet Name") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        // License Information Section
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "License Information",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                OutlinedTextField(
+                    value = driverId,
+                    onValueChange = { driverId = it },
+                    label = { Text("Driver ID") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = licenseNumber,
+                    onValueChange = { licenseNumber = it },
+                    label = { Text("License Number") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = licenseType,
+                    onValueChange = { licenseType = it },
+                    label = { Text("License Type") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = licenseExpiry,
+                    onValueChange = { licenseExpiry = it },
+                    label = { Text("License Expiry Date") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        // Vehicle Information Section
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "Vehicle Information",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+                OutlinedTextField(
+                    value = vehiclePlate,
+                    onValueChange = { vehiclePlate = it },
+                    label = { Text("Vehicle Plate") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = vehicleMake,
+                    onValueChange = { vehicleMake = it },
+                    label = { Text("Vehicle Make") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = vehicleModel,
+                    onValueChange = { vehicleModel = it },
+                    label = { Text("Vehicle Model") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = vehicleVin,
+                    onValueChange = { vehicleVin = it },
+                    label = { Text("Vehicle VIN") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = trailerPlate,
+                    onValueChange = { trailerPlate = it },
+                    label = { Text("Trailer Plate") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = trailerType,
+                    onValueChange = { trailerType = it },
+                    label = { Text("Trailer Type") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(32.dp))
     }
 }
